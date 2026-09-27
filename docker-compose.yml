@@ -1,0 +1,9 @@
+services:
+  ozon-mcp:
+    build: .
+    restart: unless-stopped
+    environment:
+      OZON_HEADLESS: "0"
+      OZON_TRANSPORT: "stdio"
+      OZON_CHALLENGE_WAIT_MS: "12000"
+    shm_size: "1gb"
