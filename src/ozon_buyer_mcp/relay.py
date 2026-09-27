@@ -43,7 +43,7 @@ async def submit(request: Request) -> JSONResponse:
     body = await request.json()
     op = str(body.get("op") or "")
     payload = body.get("payload") or {}
-    if op not in {"search-dom", "fetch-json"}:
+    if op not in {"search-dom", "delivery-dom", "fetch-json"}:
         return JSONResponse({"ok": False, "error": "unsupported operation"}, status_code=400)
 
     job_id = uuid.uuid4().hex
