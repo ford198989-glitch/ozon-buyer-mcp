@@ -119,9 +119,10 @@ class OzonBrowser:
     def _remote_post_sync(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self._remote_worker_url or not self._remote_worker_token:
             raise OzonUpstreamError("Remote Ozon worker is not fully configured")
-        body = json.dumps(payload).encode("utf-8")
+        operation = endpoint.strip("/")
+        body = json.dumps({"op": operation, "payload": payload}).encode("utf-8")
         req = urllib.request.Request(
-            self._remote_worker_url + endpoint,
+            self._remote_worker_url + "/submit",
             data=body,
             method="POST",
             headers={
