@@ -68,7 +68,6 @@ app = Starlette(
         Route("/search-dom", search_dom, methods=["POST"]),
         Route("/fetch-json", fetch_json, methods=["POST"]),
     ],
-    on_shutdown=[shutdown],
 )
 
 
