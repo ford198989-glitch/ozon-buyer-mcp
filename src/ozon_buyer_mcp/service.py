@@ -1,11 +1,46 @@
 from __future__ import annotations
 import asyncio
+import re
 from urllib.parse import quote
 from .browser import OzonBrowser
-from .models import CompareItem, CompareResponse, DeliveryResponse, PriceResponse, ProductDetails, ReviewsResponse, SearchResponse
-from .parsers import delivery_candidates, parse_details, parse_reviews, parse_search, product_path
+from .models import CompareItem, CompareResponse, DeliveryResponse, PriceResponse, ProductDetails, ProductSummary, ReviewsResponse, SearchResponse
+from .parsers import delivery_candidates, parse_details, parse_reviews, product_path, price_to_number
 
 _SORT_MAP = {"popular":"", "price":"price", "price_desc":"price_desc", "rating":"rating", "new":"new", "discount":"discount"}
+
+def _summary_from_dom(card: dict) -> ProductSummary:
+    text = str(card.get("text") or "")
+    prices = [price_to_number(x) for x in re.findall(r"(\d[\d\s\u00a0]{1,12})\s*₽", text)]
+    prices = [p for p in prices if p]
+    price = prices[0] if prices else None
+    old = next((p for p in prices[1:] if price and p > price), None)
+
+    rating = None
+    reviews = None
+    m = re.search(r"([1-5][\.,]\d)\s+([\d\s]+)\s*(?:отзыв|отзывов|оцен)", text, re.I)
+    if m:
+        try:
+            rating = float(m.group(1).replace(",", "."))
+        except ValueError:
+            pass
+        reviews = price_to_number(m.group(2))
+
+    title = str(card.get("title") or "").strip() or None
+    if not title:
+        lines = [x.strip() for x in re.split(r"[\r\n]+", text) if x.strip()]
+        title = next((x for x in lines if "₽" not in x and len(x) >= 8), None)
+
+    return ProductSummary(
+        sku=str(card.get("sku") or ""),
+        title=title,
+        url=str(card.get("url") or "") or None,
+        price_rub=price,
+        regular_price_rub=price,
+        old_price_rub=old,
+        rating=rating,
+        reviews=reviews,
+        image=str(card.get("image") or "") or None,
+    )
 
 class OzonService:
     def __init__(self, browser: OzonBrowser) -> None:
@@ -22,9 +57,23 @@ class OzonService:
         if price_min is not None or price_max is not None:
             low=max(0,int(price_min or 0)); high=max(low,int(price_max or 99_999_999))
             path += f"&currency_price={low}.000%3B{high}.000"
-        result=parse_search(await self.browser.fetch_json(path), query=query, sort=sort, limit=limit)
-        result.note="Buyer-side data comes from Ozon storefront composer-api and can vary by region/session."
-        return result
+
+        cards = await self.browser.search_dom(path, limit=limit)
+        items = [_summary_from_dom(card) for card in cards]
+        items = [item for item in items if item.sku]
+
+        if price_min is not None:
+            items = [x for x in items if x.price_rub is None or x.price_rub >= price_min]
+        if price_max is not None:
+            items = [x for x in items if x.price_rub is None or x.price_rub <= price_max]
+
+        return SearchResponse(
+            query=query,
+            sort=sort,
+            count=len(items),
+            items=items[:limit],
+            note="Search data was read from the rendered Ozon web page; no direct composer-api request was used.",
+        )
 
     async def product(self, product: str, include_description: bool = True) -> ProductDetails:
         path=product_path(product)
