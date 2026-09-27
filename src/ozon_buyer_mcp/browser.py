@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 import re
+import urllib.error
+import urllib.request
 from typing import Any
 from urllib.parse import quote
 
@@ -43,6 +45,8 @@ class OzonBrowser:
         self._challenge_wait_ms = int(os.getenv("OZON_CHALLENGE_WAIT_MS", "12000"))
         self._nav_timeout_ms = int(os.getenv("OZON_BROWSER_TIMEOUT_MS", "90000"))
         self._proxy = _proxy_config()
+        self._remote_worker_url = (os.getenv("OZON_REMOTE_WORKER_URL") or "").strip().rstrip("/")
+        self._remote_worker_token = (os.getenv("OZON_REMOTE_WORKER_TOKEN") or "").strip()
         self._pw = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -112,7 +116,42 @@ class OzonBrowser:
                 raise OzonUpstreamError(f"Ozon home page returned HTTP {response.status}")
             self._ready = True
 
+    def _remote_post_sync(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self._remote_worker_url or not self._remote_worker_token:
+            raise OzonUpstreamError("Remote Ozon worker is not fully configured")
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            self._remote_worker_url + endpoint,
+            data=body,
+            method="POST",
+            headers={
+                "content-type": "application/json",
+                "authorization": f"Bearer {self._remote_worker_token}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=max(20, self._nav_timeout_ms // 1000 + 10)) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = json.loads(exc.read().decode("utf-8")).get("error")
+            except Exception:
+                detail = None
+            raise OzonUpstreamError(detail or f"Remote worker returned HTTP {exc.code}") from exc
+        except Exception as exc:
+            raise OzonUpstreamError(f"Remote worker request failed: {exc}") from exc
+        if not data.get("ok"):
+            raise OzonUpstreamError(str(data.get("error") or "Remote worker failed"))
+        return data
+
+    async def _remote_post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await asyncio.to_thread(self._remote_post_sync, endpoint, payload)
+
     async def search_dom(self, path: str, limit: int = 12) -> list[dict[str, Any]]:
+        if self._remote_worker_url:
+            data = await self._remote_post("/search-dom", {"path": path, "limit": limit})
+            return list(data.get("items") or [])
+
         await self.ensure_ready()
         assert self._page is not None
         url = "https://www.ozon.ru" + path
@@ -213,6 +252,13 @@ class OzonBrowser:
         return list(dedup.values())[:limit]
 
     async def fetch_json(self, path: str, retries: int = 1) -> dict[str, Any]:
+        if self._remote_worker_url:
+            data = await self._remote_post("/fetch-json", {"path": path, "retries": retries})
+            result = data.get("data")
+            if not isinstance(result, dict):
+                raise OzonUpstreamError("Remote worker returned invalid JSON payload")
+            return result
+
         for attempt in range(retries + 1):
             try:
                 await self.ensure_ready()
