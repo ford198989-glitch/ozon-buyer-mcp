@@ -16,6 +16,16 @@ browser = OzonBrowser()
 TOKEN = (os.getenv("OZON_WORKER_TOKEN") or "").strip()
 
 
+def _json(data: dict, status_code: int = 200) -> JSONResponse:
+    # Windows PowerShell 5.1 may decode application/json as a legacy code page
+    # when charset is omitted. Declare UTF-8 explicitly to preserve Cyrillic.
+    return JSONResponse(
+        data,
+        status_code=status_code,
+        media_type="application/json; charset=utf-8",
+    )
+
+
 def _authorized(request: Request) -> bool:
     if not TOKEN:
         return False
@@ -24,42 +34,42 @@ def _authorized(request: Request) -> bool:
 
 async def health(request: Request) -> JSONResponse:
     if not _authorized(request):
-        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
-    return JSONResponse({"ok": True, "worker": "ozon-local", "headless": os.getenv("OZON_HEADLESS", "0") == "1"})
+        return _json({"ok": False, "error": "unauthorized"}, status_code=401)
+    return _json({"ok": True, "worker": "ozon-local", "headless": os.getenv("OZON_HEADLESS", "0") == "1"})
 
 
 async def search_dom(request: Request) -> JSONResponse:
     if not _authorized(request):
-        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        return _json({"ok": False, "error": "unauthorized"}, status_code=401)
     data = await request.json()
     path = str(data.get("path") or "")
     limit = max(1, min(int(data.get("limit") or 12), 30))
     try:
         items = await browser.search_dom(path, limit=limit)
-        return JSONResponse({"ok": True, "items": items})
+        return _json({"ok": True, "items": items})
     except OzonUpstreamError as exc:
         print(f"search-dom upstream error: {exc}", flush=True)
-        return JSONResponse({"ok": False, "error": str(exc)})
+        return _json({"ok": False, "error": str(exc)})
     except Exception as exc:
         print(f"search-dom error: {type(exc).__name__}: {exc}", flush=True)
-        return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+        return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
 async def fetch_json(request: Request) -> JSONResponse:
     if not _authorized(request):
-        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        return _json({"ok": False, "error": "unauthorized"}, status_code=401)
     data = await request.json()
     path = str(data.get("path") or "")
     retries = max(0, min(int(data.get("retries") or 1), 2))
     try:
         result = await browser.fetch_json(path, retries=retries)
-        return JSONResponse({"ok": True, "data": result})
+        return _json({"ok": True, "data": result})
     except OzonUpstreamError as exc:
         print(f"fetch-json upstream error: {exc}", flush=True)
-        return JSONResponse({"ok": False, "error": str(exc)})
+        return _json({"ok": False, "error": str(exc)})
     except Exception as exc:
         print(f"fetch-json error: {type(exc).__name__}: {exc}", flush=True)
-        return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+        return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
 async def shutdown() -> None:
