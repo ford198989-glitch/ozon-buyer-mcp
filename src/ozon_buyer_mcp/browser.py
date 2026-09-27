@@ -47,6 +47,7 @@ class OzonBrowser:
         self._proxy = _proxy_config()
         self._chrome_profile_dir = (os.getenv("OZON_CHROME_PROFILE_DIR") or "").strip()
         self._browser_channel = (os.getenv("OZON_BROWSER_CHANNEL") or "").strip()
+        self._cdp_url = (os.getenv("OZON_CDP_URL") or "").strip()
         self._remote_worker_url = (os.getenv("OZON_REMOTE_WORKER_URL") or "").strip().rstrip("/")
         self._remote_worker_token = (os.getenv("OZON_REMOTE_WORKER_TOKEN") or "").strip()
         self._pw = None
@@ -58,6 +59,16 @@ class OzonBrowser:
 
     async def _launch(self) -> None:
         self._pw = await async_playwright().start()
+
+        # Best local mode: attach to a Chrome process started independently
+        # of Playwright. Playwright does not control Chrome's launch flags.
+        if self._cdp_url:
+            self._browser = await self._pw.chromium.connect_over_cdp(self._cdp_url)
+            contexts = self._browser.contexts
+            if not contexts:
+                raise OzonUpstreamError("Chrome CDP connected but no browser context is available")
+            self._context = contexts[0]
+            return
 
         # Local Windows mode can use the user's real installed Chrome with a
         # dedicated persistent profile. This is closer to a normal browser
