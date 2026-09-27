@@ -129,7 +129,7 @@ class OzonBrowser:
         async with self._lock:
             if self._ready and self._page:
                 return
-            if not self._browser:
+            if not self._context:
                 await self._launch()
             assert self._context is not None
             self._page = await self._context.new_page()
