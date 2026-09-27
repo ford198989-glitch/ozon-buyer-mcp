@@ -45,6 +45,8 @@ class OzonBrowser:
         self._challenge_wait_ms = int(os.getenv("OZON_CHALLENGE_WAIT_MS", "12000"))
         self._nav_timeout_ms = int(os.getenv("OZON_BROWSER_TIMEOUT_MS", "90000"))
         self._proxy = _proxy_config()
+        self._chrome_profile_dir = (os.getenv("OZON_CHROME_PROFILE_DIR") or "").strip()
+        self._browser_channel = (os.getenv("OZON_BROWSER_CHANNEL") or "").strip()
         self._remote_worker_url = (os.getenv("OZON_REMOTE_WORKER_URL") or "").strip().rstrip("/")
         self._remote_worker_token = (os.getenv("OZON_REMOTE_WORKER_TOKEN") or "").strip()
         self._pw = None
@@ -56,6 +58,28 @@ class OzonBrowser:
 
     async def _launch(self) -> None:
         self._pw = await async_playwright().start()
+
+        # Local Windows mode can use the user's real installed Chrome with a
+        # dedicated persistent profile. This is closer to a normal browser
+        # session than Playwright's bundled Chromium and keeps Ozon cookies.
+        if self._chrome_profile_dir:
+            kwargs: dict[str, Any] = {
+                "user_data_dir": self._chrome_profile_dir,
+                "headless": self._headless,
+                "viewport": {"width": 1920, "height": 1080},
+                "locale": "ru-RU",
+                "timezone_id": "Europe/Moscow",
+                "args": ["--disable-blink-features=AutomationControlled"],
+                "ignore_default_args": ["--enable-automation"],
+            }
+            if self._browser_channel:
+                kwargs["channel"] = self._browser_channel
+            if self._proxy:
+                kwargs["proxy"] = self._proxy
+            self._context = await self._pw.chromium.launch_persistent_context(**kwargs)
+            self._browser = None
+            return
+
         launch_kwargs: dict[str, Any] = {
             "headless": self._headless,
             "args": [
@@ -71,6 +95,8 @@ class OzonBrowser:
                 "--disable-background-networking",
             ],
         }
+        if self._browser_channel:
+            launch_kwargs["channel"] = self._browser_channel
         if self._proxy:
             launch_kwargs["proxy"] = self._proxy
 
