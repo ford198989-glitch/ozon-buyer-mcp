@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import json
 import re
 from urllib.parse import quote
 from .browser import OzonBrowser
@@ -107,10 +108,10 @@ class OzonService:
 
     async def delivery(self, product: str) -> DeliveryResponse:
         path = product_path(product)
+        details = await self.product(product, include_description=False)
+        seller_name = (details.seller.name if details.seller else "") or ""
+        price_text = str(details.price_rub or "")
 
-        # Ozon loads parts of the PDP (including commercial/delivery widgets)
-        # through separate layout pages. Inspect several page fragments and
-        # collect delivery/date strings from their widget states.
         paths = [path]
         paths += [
             f"{path}?layout_container=pdpPage2column&layout_page_index={i}"
@@ -121,17 +122,63 @@ class OzonService:
             return_exceptions=True,
         )
 
+        trigger = re.compile(
+            r"(?:достав\w*|сегодня|завтра|послезавтра|"
+            r"\b\d{1,2}\s+(?:сентябр\w*|октябр\w*))",
+            re.I,
+        )
         found = []
-        for page in pages:
-            if isinstance(page, dict):
-                for item in delivery_candidates(page, limit=40):
-                    if item not in found:
-                        found.append(item)
+        scored = []
+
+        for page_index, page in enumerate(pages):
+            if not isinstance(page, dict):
+                continue
+            for widget_key, raw in (page.get("widgetStates") or {}).items():
+                try:
+                    obj = json.loads(raw) if isinstance(raw, str) else raw
+                    text = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    text = str(raw)
+                if not trigger.search(text):
+                    continue
+
+                lower = text.lower()
+                seller_match = bool(seller_name and seller_name.lower() in lower)
+                price_match = bool(price_text and price_text in text)
+
+                for m in trigger.finditer(text):
+                    a = max(0, m.start() - 220)
+                    b = min(len(text), m.end() + 260)
+                    snippet = re.sub(r"\\[nrt]+|\s+", " ", text[a:b]).strip()
+                    prefix = f"{widget_key}"
+                    if seller_match:
+                        prefix += " [seller]"
+                    if price_match:
+                        prefix += " [price]"
+                    candidate = f"{prefix}: {snippet}"
+                    score = (4 if seller_match else 0) + (2 if price_match else 0) + (1 if page_index == 0 else 0)
+                    if candidate not in found:
+                        found.append(candidate)
+                        scored.append((score, candidate))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        candidates = [x[1] for x in scored[:40]]
+
+        if not candidates:
+            for page in pages:
+                if isinstance(page, dict):
+                    for item in delivery_candidates(page, limit=40):
+                        if item not in candidates:
+                            candidates.append(item)
 
         return DeliveryResponse(
             product=product,
-            candidates=found[:40],
-            note="Delivery/date text was collected from Ozon PDP widget fragments for the delivery location/session selected in the local Chrome profile.",
+            candidates=candidates[:40],
+            note=(
+                f"Delivery contexts are ranked for the current product seller={seller_name!r} "
+                f"and price={details.price_rub!r}; dates may still include alternate offers if Ozon "
+                "stores seller and delivery widgets separately."
+            ),
         )
 
     async def compare(self, products: list[str]) -> CompareResponse:
