@@ -289,6 +289,43 @@ class OzonBrowser:
                 dedup[sku] = card
         return list(dedup.values())[:limit]
 
+    async def delivery_dom(self, path: str) -> list[str]:
+        if self._remote_worker_url:
+            data = await self._remote_post("/delivery-dom", {"path": path})
+            return list(data.get("candidates") or [])
+
+        await self.ensure_ready()
+        assert self._page is not None
+        url = "https://www.ozon.ru" + path
+        response = await self._page.goto(url, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
+        await self._page.wait_for_timeout(max(5000, self._challenge_wait_ms // 2))
+
+        reason = await self._blocked_reason(self._page)
+        if reason:
+            raise OzonUpstreamError(f"Ozon product page blocked: {reason}")
+        if response and response.status >= 400:
+            raise OzonUpstreamError(f"Ozon product page returned HTTP {response.status}")
+
+        body = await self._page.locator("body").inner_text(timeout=10000)
+        lines = [re.sub(r"\s+", " ", line).strip() for line in body.splitlines()]
+        trigger = re.compile(
+            r"(достав|завтра|послезавтра|сегодня|пвз|пункт выдачи|курьер|"
+            r"сентябр|октябр|ноябр|декабр|январ|феврал|март|апрел|ма[йя]|июн|июл|август)",
+            re.I,
+        )
+        out: list[str] = []
+        for i, line in enumerate(lines):
+            if not line or not trigger.search(line):
+                continue
+            start = max(0, i - 1)
+            end = min(len(lines), i + 2)
+            snippet = " | ".join(x for x in lines[start:end] if x)
+            if 3 <= len(snippet) <= 300 and snippet not in out:
+                out.append(snippet)
+            if len(out) >= 20:
+                break
+        return out
+
     async def fetch_json(self, path: str, retries: int = 1) -> dict[str, Any]:
         if self._remote_worker_url:
             data = await self._remote_post("/fetch-json", {"path": path, "retries": retries})
@@ -326,6 +363,17 @@ class OzonBrowser:
     async def close(self) -> None:
         self._ready = False
         self._page = None
+
+        # When attached over CDP, Chrome is an externally managed process.
+        # Disconnect Playwright without closing the user's Chrome/context.
+        if self._cdp_url:
+            self._context = None
+            self._browser = None
+            if self._pw:
+                await self._pw.stop()
+            self._pw = None
+            return
+
         if self._context:
             await self._context.close()
         self._context = None
