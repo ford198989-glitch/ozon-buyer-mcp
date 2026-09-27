@@ -107,11 +107,32 @@ class OzonService:
 
     async def delivery(self, product: str) -> DeliveryResponse:
         path=product_path(product)
-        page = await self.browser.fetch_json(path)
+
+        # Read the rendered product page through the already-supported
+        # search-dom worker operation. On a PDP this captures text blocks
+        # around product links/reviews/other-seller anchors and, importantly,
+        # the visible delivery wording from the user's current Ozon session.
+        cards = await self.browser.search_dom(path, limit=30)
+        trigger = re.compile(
+            r"(достав|сегодня|завтра|послезавтра|"
+            r"\b(?:28|29|30|31)\s+сентябр\w*|"
+            r"\b(?:1|2)\s+октябр\w*)",
+            re.I,
+        )
+        found = []
+        for card in cards:
+            text = re.sub(r"\s+", " ", str(card.get("text") or "")).strip()
+            if text and trigger.search(text) and text not in found:
+                found.append(text)
+
+        if not found:
+            page = await self.browser.fetch_json(path)
+            found = delivery_candidates(page, limit=20)
+
         return DeliveryResponse(
             product=product,
-            candidates=delivery_candidates(page, limit=20),
-            note="Delivery data depends on the delivery location/session selected in the local Chrome profile.",
+            candidates=found[:20],
+            note="Delivery text was read from the rendered Ozon product page when available and depends on the delivery location/session selected in the local Chrome profile.",
         )
 
     async def compare(self, products: list[str]) -> CompareResponse:
