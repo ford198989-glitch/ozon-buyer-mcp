@@ -5,7 +5,7 @@ from mcp.server import MCPServer
 from .browser import OzonBrowser
 from .service import OzonService
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 mcp = MCPServer("ozon-buyer")
 browser = OzonBrowser()
 service = OzonService(browser)
