@@ -38,9 +38,11 @@ async def search_dom(request: Request) -> JSONResponse:
         items = await browser.search_dom(path, limit=limit)
         return JSONResponse({"ok": True, "items": items})
     except OzonUpstreamError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+        print(f"search-dom upstream error: {exc}", flush=True)
+        return JSONResponse({"ok": False, "error": str(exc)})
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+        print(f"search-dom error: {type(exc).__name__}: {exc}", flush=True)
+        return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
 async def fetch_json(request: Request) -> JSONResponse:
@@ -53,9 +55,11 @@ async def fetch_json(request: Request) -> JSONResponse:
         result = await browser.fetch_json(path, retries=retries)
         return JSONResponse({"ok": True, "data": result})
     except OzonUpstreamError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+        print(f"fetch-json upstream error: {exc}", flush=True)
+        return JSONResponse({"ok": False, "error": str(exc)})
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+        print(f"fetch-json error: {type(exc).__name__}: {exc}", flush=True)
+        return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
 async def shutdown() -> None:
