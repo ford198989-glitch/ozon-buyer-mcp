@@ -95,7 +95,11 @@ class OzonService:
 
     async def delivery(self, product: str) -> DeliveryResponse:
         path=product_path(product)
-        return DeliveryResponse(product=product,candidates=delivery_candidates(await self.browser.fetch_json(path)))
+        return DeliveryResponse(
+            product=product,
+            candidates=await self.browser.delivery_dom(path),
+            note="Delivery text was read from the rendered Ozon product page and depends on the delivery location/session selected in the local Chrome profile.",
+        )
 
     async def compare(self, products: list[str]) -> CompareResponse:
         cleaned=[str(x).strip() for x in products if str(x).strip()]
