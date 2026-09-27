@@ -145,18 +145,26 @@ class OzonService:
                 lower = text.lower()
                 seller_match = bool(seller_name and seller_name.lower() in lower)
                 price_match = bool(price_text and price_text in text)
+                sku_match = str(product) in text or (details.sku and str(details.sku) in text)
 
                 for m in trigger.finditer(text):
                     a = max(0, m.start() - 220)
                     b = min(len(text), m.end() + 260)
                     snippet = re.sub(r"\\[nrt]+|\s+", " ", text[a:b]).strip()
                     prefix = f"{widget_key}"
+                    if sku_match:
+                        prefix += " [sku]"
                     if seller_match:
                         prefix += " [seller]"
                     if price_match:
                         prefix += " [price]"
                     candidate = f"{prefix}: {snippet}"
-                    score = (4 if seller_match else 0) + (2 if price_match else 0) + (1 if page_index == 0 else 0)
+                    score = (
+                        (8 if sku_match else 0)
+                        + (4 if seller_match else 0)
+                        + (2 if price_match else 0)
+                        + (1 if page_index == 0 else 0)
+                    )
                     if candidate not in found:
                         found.append(candidate)
                         scored.append((score, candidate))
