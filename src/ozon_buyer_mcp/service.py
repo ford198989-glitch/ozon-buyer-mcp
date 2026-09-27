@@ -25,6 +25,17 @@ def _summary_from_dom(card: dict) -> ProductSummary:
             pass
         reviews = price_to_number(m.group(2))
 
+    delivery_text = None
+    dm = re.search(
+        r"(.{0,90}(?:достав\w*|завтра|послезавтра|сегодня|"
+        r"\b(?:28|29)\s+сентябр\w*|"
+        r"понедельник|вторник|сред[ау]|четверг|пятниц|суббот|воскресень).{0,130})",
+        text,
+        re.I,
+    )
+    if dm:
+        delivery_text = re.sub(r"\s+", " ", dm.group(1)).strip()
+
     title = str(card.get("title") or "").strip() or None
     if not title:
         lines = [x.strip() for x in re.split(r"[\r\n]+", text) if x.strip()]
@@ -37,6 +48,7 @@ def _summary_from_dom(card: dict) -> ProductSummary:
         price_rub=price,
         regular_price_rub=price,
         old_price_rub=old,
+        discount_text=delivery_text,
         rating=rating,
         reviews=reviews,
         image=str(card.get("image") or "") or None,
