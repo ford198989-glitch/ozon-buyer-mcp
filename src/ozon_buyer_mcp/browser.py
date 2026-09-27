@@ -16,11 +16,32 @@ class OzonUpstreamError(RuntimeError):
     pass
 
 
+def _proxy_config() -> dict[str, str] | None:
+    server = (os.getenv("OZON_PROXY_SERVER") or "").strip()
+    if not server:
+        return None
+    if "://" not in server:
+        server = "http://" + server
+
+    proxy: dict[str, str] = {"server": server}
+    username = os.getenv("OZON_PROXY_USERNAME")
+    password = os.getenv("OZON_PROXY_PASSWORD")
+    bypass = os.getenv("OZON_PROXY_BYPASS")
+    if username:
+        proxy["username"] = username
+    if password:
+        proxy["password"] = password
+    if bypass:
+        proxy["bypass"] = bypass
+    return proxy
+
+
 class OzonBrowser:
     def __init__(self, headless: bool | None = None) -> None:
         self._headless = (os.getenv("OZON_HEADLESS", "0") == "1") if headless is None else headless
         self._challenge_wait_ms = int(os.getenv("OZON_CHALLENGE_WAIT_MS", "12000"))
         self._nav_timeout_ms = int(os.getenv("OZON_BROWSER_TIMEOUT_MS", "90000"))
+        self._proxy = _proxy_config()
         self._pw = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -30,9 +51,9 @@ class OzonBrowser:
 
     async def _launch(self) -> None:
         self._pw = await async_playwright().start()
-        self._browser = await self._pw.chromium.launch(
-            headless=self._headless,
-            args=[
+        launch_kwargs: dict[str, Any] = {
+            "headless": self._headless,
+            "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
@@ -44,10 +65,15 @@ class OzonBrowser:
                 "--disable-extensions",
                 "--disable-background-networking",
             ],
-        )
+        }
+        if self._proxy:
+            launch_kwargs["proxy"] = self._proxy
+
+        self._browser = await self._pw.chromium.launch(**launch_kwargs)
         self._context = await self._browser.new_context(
             viewport={"width": 1920, "height": 1080},
             locale="ru-RU",
+            timezone_id="Europe/Moscow",
         )
 
     async def ensure_ready(self) -> None:
