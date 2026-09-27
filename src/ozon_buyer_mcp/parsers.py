@@ -210,8 +210,13 @@ def parse_reviews(page: dict[str, Any], limit: int = 10) -> ReviewsResponse:
     return ReviewsResponse(rating=rating, total_reviews=total, count=len(out), reviews=out)
 
 
-def delivery_candidates(page: dict[str, Any], limit: int = 8) -> list[str]:
-    trigger = re.compile(r"(достав|получ|сегодня|завтра|пункт выдачи|пвз)", re.I)
+def delivery_candidates(page: dict[str, Any], limit: int = 20) -> list[str]:
+    trigger = re.compile(
+        r"(достав|получ|сегодня|завтра|послезавтра|пункт выдачи|пвз|курьер|"
+        r"сентябр|октябр|ноябр|декабр|январ|феврал|март|апрел|ма[йя]|июн|июл|август|"
+        r"понедельник|вторник|сред[ау]|четверг|пятниц|суббот|воскресень)",
+        re.I,
+    )
     found: list[str] = []
 
     def walk(node: Any) -> None:
@@ -219,7 +224,7 @@ def delivery_candidates(page: dict[str, Any], limit: int = 8) -> list[str]:
             return
         if isinstance(node, str):
             clean = re.sub(r"\s+", " ", node).strip()
-            if 3 <= len(clean) <= 180 and trigger.search(clean):
+            if 3 <= len(clean) <= 300 and trigger.search(clean):
                 found.append(clean)
         elif isinstance(node, list):
             for x in node:
