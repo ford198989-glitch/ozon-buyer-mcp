@@ -106,33 +106,32 @@ class OzonService:
                              old_price_rub=d.old_price_rub,available=d.available,url=d.url)
 
     async def delivery(self, product: str) -> DeliveryResponse:
-        path=product_path(product)
+        path = product_path(product)
 
-        # Read the rendered product page through the already-supported
-        # search-dom worker operation. On a PDP this captures text blocks
-        # around product links/reviews/other-seller anchors and, importantly,
-        # the visible delivery wording from the user's current Ozon session.
-        cards = await self.browser.search_dom(path, limit=30)
-        trigger = re.compile(
-            r"(достав|сегодня|завтра|послезавтра|"
-            r"\b(?:28|29|30|31)\s+сентябр\w*|"
-            r"\b(?:1|2)\s+октябр\w*)",
-            re.I,
+        # Ozon loads parts of the PDP (including commercial/delivery widgets)
+        # through separate layout pages. Inspect several page fragments and
+        # collect delivery/date strings from their widget states.
+        paths = [path]
+        paths += [
+            f"{path}?layout_container=pdpPage2column&layout_page_index={i}"
+            for i in range(1, 7)
+        ]
+        pages = await asyncio.gather(
+            *(self.browser.fetch_json(p, retries=1) for p in paths),
+            return_exceptions=True,
         )
-        found = []
-        for card in cards:
-            text = re.sub(r"\s+", " ", str(card.get("text") or "")).strip()
-            if text and trigger.search(text) and text not in found:
-                found.append(text)
 
-        if not found:
-            page = await self.browser.fetch_json(path)
-            found = delivery_candidates(page, limit=20)
+        found = []
+        for page in pages:
+            if isinstance(page, dict):
+                for item in delivery_candidates(page, limit=40):
+                    if item not in found:
+                        found.append(item)
 
         return DeliveryResponse(
             product=product,
-            candidates=found[:20],
-            note="Delivery text was read from the rendered Ozon product page when available and depends on the delivery location/session selected in the local Chrome profile.",
+            candidates=found[:40],
+            note="Delivery/date text was collected from Ozon PDP widget fragments for the delivery location/session selected in the local Chrome profile.",
         )
 
     async def compare(self, products: list[str]) -> CompareResponse:
