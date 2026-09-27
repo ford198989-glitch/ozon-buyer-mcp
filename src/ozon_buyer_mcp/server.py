@@ -5,17 +5,23 @@ from mcp.server import MCPServer
 from .browser import OzonBrowser
 from .service import OzonService
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 mcp = MCPServer("ozon-buyer")
 browser = OzonBrowser()
 service = OzonService(browser)
 
 @mcp.tool()
 async def ozon_health() -> dict:
-    return {"ok": True, "version": VERSION, "mode": "buyer-read-only", "writes_enabled": False,
-            "orders_enabled": False, "account_login": False,
-            "transport": os.getenv("OZON_TRANSPORT", "stdio"),
-            "headless": os.getenv("OZON_HEADLESS", "0") == "1"}
+    return {
+        "ok": True,
+        "version": VERSION,
+        "mode": "buyer-read-only",
+        "writes_enabled": False,
+        "orders_enabled": False,
+        "account_login": False,
+        "transport": os.getenv("OZON_TRANSPORT", "stdio"),
+        "headless": os.getenv("OZON_HEADLESS", "0") == "1",
+    }
 
 @mcp.tool()
 async def ozon_search(query: str, limit: int = 12, sort: str = "popular",
@@ -51,6 +57,8 @@ def main() -> None:
             "host": os.getenv("OZON_HOST", "0.0.0.0"),
             "port": int(os.getenv("PORT", os.getenv("OZON_PORT", "8084"))),
             "streamable_http_path": os.getenv("OZON_MCP_PATH", "/mcp"),
+            "json_response": True,
+            "stateless_http": True,
         }
     try:
         mcp.run(transport=transport, **kwargs)
