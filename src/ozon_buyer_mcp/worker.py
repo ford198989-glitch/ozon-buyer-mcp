@@ -55,6 +55,22 @@ async def search_dom(request: Request) -> JSONResponse:
         return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
+async def delivery_dom(request: Request) -> JSONResponse:
+    if not _authorized(request):
+        return _json({"ok": False, "error": "unauthorized"}, status_code=401)
+    data = await request.json()
+    path = str(data.get("path") or "")
+    try:
+        candidates = await browser.delivery_dom(path)
+        return _json({"ok": True, "candidates": candidates})
+    except OzonUpstreamError as exc:
+        print(f"delivery-dom upstream error: {exc}", flush=True)
+        return _json({"ok": False, "error": str(exc)})
+    except Exception as exc:
+        print(f"delivery-dom error: {type(exc).__name__}: {exc}", flush=True)
+        return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+
 async def fetch_json(request: Request) -> JSONResponse:
     if not _authorized(request):
         return _json({"ok": False, "error": "unauthorized"}, status_code=401)
@@ -80,6 +96,7 @@ app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
         Route("/search-dom", search_dom, methods=["POST"]),
+        Route("/delivery-dom", delivery_dom, methods=["POST"]),
         Route("/fetch-json", fetch_json, methods=["POST"]),
     ],
 )
