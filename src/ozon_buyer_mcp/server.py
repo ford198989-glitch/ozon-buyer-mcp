@@ -5,7 +5,7 @@ from mcp.server import MCPServer
 from .browser import OzonBrowser
 from .service import OzonService
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 mcp = MCPServer("ozon-buyer")
 browser = OzonBrowser()
 service = OzonService(browser)
@@ -21,6 +21,7 @@ async def ozon_health() -> dict:
         "account_login": False,
         "transport": os.getenv("OZON_TRANSPORT", "stdio"),
         "headless": os.getenv("OZON_HEADLESS", "0") == "1",
+        "proxy_enabled": bool((os.getenv("OZON_PROXY_SERVER") or "").strip()),
     }
 
 @mcp.tool()
