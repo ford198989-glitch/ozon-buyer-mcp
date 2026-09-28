@@ -15,7 +15,7 @@ $tokenFile = Join-Path $base ".worker-token.dpapi"
 
 Write-Host ""
 Write-Host "=== Ozon Buyer MCP: PC connector ===" -ForegroundColor Cyan
-Write-Host "Обновляю локальный код из GitHub..." -ForegroundColor Yellow
+Write-Host "Updating local code from GitHub..." -ForegroundColor Yellow
 
 if (Test-Path $tmpZip) { Remove-Item $tmpZip -Force }
 if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
@@ -39,7 +39,7 @@ if (Test-Path $tokenFile) {
 }
 
 if ([string]::IsNullOrWhiteSpace($Token)) {
-    Write-Host "Первый запуск: введи OZON worker token. Он сохранится локально через Windows DPAPI." -ForegroundColor Yellow
+    Write-Host "First run: enter the Ozon worker token once. Windows will save it securely." -ForegroundColor Yellow
     $secure = Read-Host "OZON worker token" -AsSecureString
     $Token = [System.Net.NetworkCredential]::new("", $secure).Password
     if ([string]::IsNullOrWhiteSpace($Token)) { throw "Worker token is required" }
@@ -53,7 +53,7 @@ $chromeCandidates = @(
     (Join-Path $env:LOCALAPPDATA "Google\Chrome\Application\chrome.exe")
 )
 $chrome = $chromeCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if (-not $chrome) { throw "Google Chrome не найден." }
+if (-not $chrome) { throw "Google Chrome was not found." }
 
 function Ensure-ChromeCdp {
     $cdpOk = $false
@@ -63,7 +63,7 @@ function Ensure-ChromeCdp {
     } catch {}
 
     if (-not $cdpOk) {
-        Write-Host "Chrome CDP недоступен. Перезапускаю внешний Chrome..." -ForegroundColor Yellow
+        Write-Host "Chrome CDP is offline. Starting Chrome..." -ForegroundColor Yellow
         New-Item -ItemType Directory -Force -Path $profile | Out-Null
         Start-Process $chrome -ArgumentList @(
             "--remote-debugging-port=9222",
@@ -82,7 +82,7 @@ function Ensure-ChromeCdp {
     }
 
     if (-not $cdpOk) {
-        throw "External Chrome CDP недоступен на 127.0.0.1:9222"
+        throw "External Chrome CDP is unavailable at 127.0.0.1:9222"
     }
 }
 
@@ -97,8 +97,9 @@ if (Get-Command py -ErrorAction SilentlyContinue) {
     $pythonMode = "python"
     & python -m pip install -q -e $base
 } else {
-    throw "Python 3.12+ не найден."
+    throw "Python 3.12+ was not found."
 }
+if ($LASTEXITCODE -ne 0) { throw "Python package installation failed (exit code $LASTEXITCODE)." }
 
 $env:OZON_WORKER_TOKEN = $Token
 $env:OZON_WORKER_HOST = "127.0.0.1"
@@ -120,9 +121,12 @@ try {
     if ($listeners) { Start-Sleep -Milliseconds 800 }
 } catch {}
 
-Write-Host "Запускаю локальный worker..." -ForegroundColor Yellow
-$cmd = if ($pythonMode -eq "py") { "Set-Location '$base'; py -3 -m ozon_buyer_mcp.worker" } else { "Set-Location '$base'; python -m ozon_buyer_mcp.worker" }
-Start-Process powershell.exe -ArgumentList @("-NoExit","-ExecutionPolicy","Bypass","-Command",$cmd)
+Write-Host "Starting local worker..." -ForegroundColor Yellow
+$workerOut = Join-Path $base "worker.stdout.log"
+$workerErr = Join-Path $base "worker.stderr.log"
+Remove-Item $workerOut, $workerErr -Force -ErrorAction SilentlyContinue
+$workerArgs = if ($pythonMode -eq "py") { @("-3", "-m", "ozon_buyer_mcp.worker") } else { @("-m", "ozon_buyer_mcp.worker") }
+$workerProcess = Start-Process -FilePath $pythonMode -ArgumentList $workerArgs -PassThru -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr
 
 $localOk = $false
 for ($i=0; $i -lt 25; $i++) {
@@ -131,21 +135,29 @@ for ($i=0; $i -lt 25; $i++) {
         $null = Invoke-RestMethod "http://127.0.0.1:8765/health" -Headers $localHeaders -TimeoutSec 2
         $localOk = $true
         break
-    } catch {}
+    } catch {
+        $workerProcess.Refresh()
+        if ($workerProcess.HasExited) { break }
+    }
 }
-if (-not $localOk) { throw "Local worker не отвечает на 127.0.0.1:8765" }
+if (-not $localOk) {
+    Write-Host "Worker diagnostic output:" -ForegroundColor Red
+    if (Test-Path $workerErr) { Get-Content $workerErr -Tail 30 | ForEach-Object { Write-Host $_ } }
+    if (Test-Path $workerOut) { Get-Content $workerOut -Tail 10 | ForEach-Object { Write-Host $_ } }
+    throw "Local worker did not start at 127.0.0.1:8765"
+}
 Write-Host "Local worker: OK" -ForegroundColor Green
 
 try {
     $null = Invoke-RestMethod "$relay/health" -TimeoutSec 10
     Write-Host "Railway relay: OK" -ForegroundColor Green
 } catch {
-    throw "Railway relay недоступен. Проверь маршрут VPN для точного домена ozon-worker-relay-production.up.railway.app"
+    throw "Railway relay is unreachable. Check VPN routing for ozon-worker-relay-production.up.railway.app"
 }
 
 Write-Host ""
 Write-Host "CONNECTED. Waiting for Ozon requests from ChatGPT..." -ForegroundColor Green
-Write-Host "Не закрывай это окно и внешний Chrome во время работы." -ForegroundColor Cyan
+Write-Host "Keep this window and Chrome open while using Ozon." -ForegroundColor Cyan
 Write-Host ""
 
 $headers = @{ Authorization = "Bearer $Token" }
