@@ -1,4 +1,4 @@
-# Ozon Buyer MCP v0.4
+# Ozon Buyer MCP v0.4.1
 
 Read-only MCP server for buyer-side Ozon research from ChatGPT.
 
@@ -53,7 +53,7 @@ Railway relay: OK
 CONNECTED. Waiting for Ozon requests from ChatGPT...
 ```
 
-Keep the connector window and the external Chrome window open while ChatGPT is using Ozon.
+Keep the connector window open while ChatGPT is using Ozon. Since v0.4.1 the connector automatically restarts the external Chrome if it is closed, and the local worker reconnects to a fresh CDP/page instead of retaining a dead Playwright target.
 
 ## Network requirement
 
