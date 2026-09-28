@@ -25,7 +25,9 @@ This architecture is intentional: direct Railway/datacenter requests and Playwri
 - `ozon_delivery(product)`
 - `ozon_compare(products)`
 
-The service is read-only: no login, cart, checkout, orders, favorites or other write actions.
+The service is read-only: it does not perform login, cart, checkout, orders,
+favorites or other write actions. An account can be signed in manually in the
+dedicated Chrome profile after the MCP endpoint has been protected as below.
 
 ## Windows quick start
 
@@ -74,6 +76,37 @@ Do **not** route `ozon.ru` through VPN. Ozon should use the normal local Interne
 - Dedicated Chrome profile: `%USERPROFILE%\ozon-buyer-mcp-cdp-profile`.
 - Local worker binds only to `127.0.0.1:8765`.
 - Chrome CDP binds only to `127.0.0.1:9222`.
+
+## Personal account prices
+
+The local worker uses the dedicated Chrome profile at
+`%USERPROFILE%\ozon-buyer-mcp-cdp-profile`. After the MCP endpoint is protected,
+the owner can sign in to Ozon in that Chrome window. The worker then reads the
+same rendered search pages and product data shown in that profile. Ozon login
+codes, passwords, browser cookies, and the worker token must not be copied into
+ChatGPT, GitHub, or Railway. The login session stays in the local Chrome profile.
+
+Personal account access requires OAuth on the public MCP endpoint. For the
+Railway `ozon-buyer-mcp-live` service, configure these variables before deploying
+the protected build:
+
+- `AUTH0_DOMAIN`: the Auth0 tenant domain, without `https://`;
+- `AUTH0_AUDIENCE`: the canonical public MCP URL ending in `/mcp`;
+- `AUTH0_REQUIRED_SCOPE`: a dedicated scope such as `ozon:read`;
+- `AUTH0_ALLOWED_SUBJECT`: the exact Auth0 `sub` for the owner.
+
+The Auth0 API must issue RS256 access tokens for that audience and scope, and
+permit the ChatGPT connector's OAuth authorization-code + PKCE flow. On HTTP
+startup, missing or partial auth configuration stops the service. Anonymous
+requests to `/mcp` receive `401` with an OAuth discovery challenge. Product
+arguments are restricted to Ozon product URLs or SKU values so tools cannot
+navigate to account pages.
+
+Rollout order: configure Auth0 and the owner allowlist, deploy the protected
+MCP build, verify anonymous `401` and owner-authorized access, reconnect the
+ChatGPT plugin with OAuth, then sign in to Ozon in the dedicated Chrome window.
+Compare a product's price in that window with `ozon_get_price` for the same SKU.
+Prices may still depend on the selected payment method and delivery conditions.
 
 If a token was ever exposed in chat/logs/scripts, rotate it in Railway and run the launcher again after deleting `%USERPROFILE%\ozon-buyer-mcp-local\.worker-token.dpapi`.
 

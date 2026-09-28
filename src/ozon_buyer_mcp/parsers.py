@@ -32,12 +32,17 @@ def product_path(product: str) -> str:
     if not raw:
         raise ValueError("product is required")
     if raw.startswith(("http://", "https://")):
-        return urlparse(raw).path.rstrip("/") + "/"
-    if raw.startswith("/product/"):
-        return raw.rstrip("/") + "/"
+        parsed = urlparse(raw)
+        if parsed.scheme != "https" or parsed.hostname not in {"ozon.ru", "www.ozon.ru"}:
+            raise ValueError("product URL must use https://www.ozon.ru")
+        raw = parsed.path
     if raw.isdigit():
-        return f"/product/{raw}/"
-    return f"/product/{raw.strip('/')}/"
+        raw = f"/product/{raw}/"
+    elif not raw.startswith("/product/"):
+        raw = f"/product/{raw.strip('/')}/"
+    if not re.fullmatch(r"/product/(?:[^/?#]+-)?\d{6,}/?", raw):
+        raise ValueError("product must be an Ozon product SKU or product URL")
+    return raw.rstrip("/") + "/"
 
 
 def _widget_name(key: str) -> str:
