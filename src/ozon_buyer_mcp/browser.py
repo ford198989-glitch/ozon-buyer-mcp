@@ -57,6 +57,31 @@ class OzonBrowser:
         self._ready = False
         self._lock = asyncio.Lock()
 
+    def _page_is_alive(self) -> bool:
+        if not self._ready or self._page is None:
+            return False
+        try:
+            if self._page.is_closed():
+                return False
+            if self._browser is not None and not self._browser.is_connected():
+                return False
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _is_target_closed_error(exc: Exception) -> bool:
+        text = f"{type(exc).__name__}: {exc}".lower()
+        markers = (
+            "targetclosederror",
+            "target page, context or browser has been closed",
+            "browser has been closed",
+            "page has been closed",
+            "context has been closed",
+            "connection closed",
+        )
+        return any(marker in text for marker in markers)
+
     async def _launch(self) -> None:
         self._pw = await async_playwright().start()
 
@@ -135,23 +160,53 @@ class OzonBrowser:
         return None
 
     async def ensure_ready(self) -> None:
-        if self._ready and self._page:
+        if self._page_is_alive():
             return
         async with self._lock:
-            if self._ready and self._page:
+            if self._page_is_alive():
                 return
-            if not self._context:
-                await self._launch()
-            assert self._context is not None
-            self._page = await self._context.new_page()
-            response = await self._page.goto(_HOME, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
-            await self._page.wait_for_timeout(self._challenge_wait_ms)
-            reason = await self._blocked_reason(self._page)
-            if reason:
-                raise OzonUpstreamError(f"Ozon page blocked: {reason}")
-            if response and response.status >= 400:
-                raise OzonUpstreamError(f"Ozon home page returned HTTP {response.status}")
-            self._ready = True
+
+            # A previously healthy CDP/page can disappear when the user closes
+            # the external Chrome window or its tab. Drop every cached handle
+            # before reconnecting so Playwright never reuses a dead target.
+            if self._ready or self._page is not None or self._context is not None or self._browser is not None or self._pw is not None:
+                await self.close()
+
+            try:
+                if not self._context:
+                    await self._launch()
+                assert self._context is not None
+                self._page = await self._context.new_page()
+                response = await self._page.goto(_HOME, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
+                await self._page.wait_for_timeout(self._challenge_wait_ms)
+                reason = await self._blocked_reason(self._page)
+                if reason:
+                    raise OzonUpstreamError(f"Ozon page blocked: {reason}")
+                if response and response.status >= 400:
+                    raise OzonUpstreamError(f"Ozon home page returned HTTP {response.status}")
+                self._ready = True
+            except Exception:
+                await self.close()
+                raise
+
+    async def _goto_with_recovery(self, url: str, wait_ms: int):
+        for attempt in range(2):
+            try:
+                await self.ensure_ready()
+                assert self._page is not None
+                response = await self._page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=self._nav_timeout_ms,
+                )
+                await self._page.wait_for_timeout(wait_ms)
+                return response
+            except Exception as exc:
+                if attempt == 0 and self._is_target_closed_error(exc):
+                    await self.close()
+                    continue
+                raise
+        raise OzonUpstreamError("Browser target recovery failed")
 
     def _remote_post_sync(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self._remote_worker_url or not self._remote_worker_token:
@@ -190,11 +245,12 @@ class OzonBrowser:
             data = await self._remote_post("/search-dom", {"path": path, "limit": limit})
             return list(data.get("items") or [])
 
-        await self.ensure_ready()
-        assert self._page is not None
         url = "https://www.ozon.ru" + path
-        response = await self._page.goto(url, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
-        await self._page.wait_for_timeout(max(4000, self._challenge_wait_ms // 2))
+        response = await self._goto_with_recovery(
+            url,
+            wait_ms=max(4000, self._challenge_wait_ms // 2),
+        )
+        assert self._page is not None
 
         reason = await self._blocked_reason(self._page)
         if reason:
@@ -294,11 +350,12 @@ class OzonBrowser:
             data = await self._remote_post("/delivery-dom", {"path": path})
             return list(data.get("candidates") or [])
 
-        await self.ensure_ready()
-        assert self._page is not None
         url = "https://www.ozon.ru" + path
-        response = await self._page.goto(url, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
-        await self._page.wait_for_timeout(max(5000, self._challenge_wait_ms // 2))
+        response = await self._goto_with_recovery(
+            url,
+            wait_ms=max(5000, self._challenge_wait_ms // 2),
+        )
+        assert self._page is not None
 
         reason = await self._blocked_reason(self._page)
         if reason:
@@ -370,16 +427,28 @@ class OzonBrowser:
             self._context = None
             self._browser = None
             if self._pw:
-                await self._pw.stop()
+                try:
+                    await self._pw.stop()
+                except Exception:
+                    pass
             self._pw = None
             return
 
         if self._context:
-            await self._context.close()
+            try:
+                await self._context.close()
+            except Exception:
+                pass
         self._context = None
         if self._browser:
-            await self._browser.close()
+            try:
+                await self._browser.close()
+            except Exception:
+                pass
         self._browser = None
         if self._pw:
-            await self._pw.stop()
+            try:
+                await self._pw.stop()
+            except Exception:
+                pass
         self._pw = None
