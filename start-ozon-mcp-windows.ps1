@@ -55,31 +55,38 @@ $chromeCandidates = @(
 $chrome = $chromeCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 if (-not $chrome) { throw "Google Chrome не найден." }
 
-$cdpOk = $false
-try {
-    $null = Invoke-RestMethod "http://127.0.0.1:9222/json/version" -TimeoutSec 2
-    $cdpOk = $true
-} catch {}
+function Ensure-ChromeCdp {
+    $cdpOk = $false
+    try {
+        $null = Invoke-RestMethod "http://127.0.0.1:9222/json/version" -TimeoutSec 2
+        $cdpOk = $true
+    } catch {}
 
-if (-not $cdpOk) {
-    Write-Host "Запускаю обычный Google Chrome с CDP на 9222..." -ForegroundColor Yellow
-    New-Item -ItemType Directory -Force -Path $profile | Out-Null
-    Start-Process $chrome -ArgumentList @(
-        "--remote-debugging-port=9222",
-        "--remote-debugging-address=127.0.0.1",
-        "--user-data-dir=$profile",
-        "https://www.ozon.ru/"
-    )
-    for ($i=0; $i -lt 20; $i++) {
-        Start-Sleep -Seconds 1
-        try {
-            $null = Invoke-RestMethod "http://127.0.0.1:9222/json/version" -TimeoutSec 2
-            $cdpOk = $true
-            break
-        } catch {}
+    if (-not $cdpOk) {
+        Write-Host "Chrome CDP недоступен. Перезапускаю внешний Chrome..." -ForegroundColor Yellow
+        New-Item -ItemType Directory -Force -Path $profile | Out-Null
+        Start-Process $chrome -ArgumentList @(
+            "--remote-debugging-port=9222",
+            "--remote-debugging-address=127.0.0.1",
+            "--user-data-dir=$profile",
+            "https://www.ozon.ru/"
+        )
+        for ($i=0; $i -lt 20; $i++) {
+            Start-Sleep -Seconds 1
+            try {
+                $null = Invoke-RestMethod "http://127.0.0.1:9222/json/version" -TimeoutSec 2
+                $cdpOk = $true
+                break
+            } catch {}
+        }
+    }
+
+    if (-not $cdpOk) {
+        throw "External Chrome CDP недоступен на 127.0.0.1:9222"
     }
 }
-if (-not $cdpOk) { throw "External Chrome CDP недоступен на 127.0.0.1:9222" }
+
+Ensure-ChromeCdp
 Write-Host "External Chrome CDP: OK" -ForegroundColor Green
 
 $pythonMode = ""
@@ -100,24 +107,31 @@ $env:OZON_HEADLESS = "0"
 $env:OZON_CDP_URL = "http://127.0.0.1:9222"
 
 $localHeaders = @{ Authorization = "Bearer $Token" }
-$localOk = $false
+
+# Always restart the local worker after pulling new code. Otherwise a healthy
+# old process would keep running the previous package version indefinitely.
 try {
-    $null = Invoke-RestMethod "http://127.0.0.1:8765/health" -Headers $localHeaders -TimeoutSec 2
-    $localOk = $true
+    $listeners = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+    foreach ($listener in $listeners) {
+        if ($listener.OwningProcess -and $listener.OwningProcess -ne $PID) {
+            Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if ($listeners) { Start-Sleep -Milliseconds 800 }
 } catch {}
 
-if (-not $localOk) {
-    Write-Host "Запускаю локальный worker..." -ForegroundColor Yellow
-    $cmd = if ($pythonMode -eq "py") { "Set-Location '$base'; py -3 -m ozon_buyer_mcp.worker" } else { "Set-Location '$base'; python -m ozon_buyer_mcp.worker" }
-    Start-Process powershell.exe -ArgumentList @("-NoExit","-ExecutionPolicy","Bypass","-Command",$cmd)
-    for ($i=0; $i -lt 25; $i++) {
-        Start-Sleep -Seconds 1
-        try {
-            $null = Invoke-RestMethod "http://127.0.0.1:8765/health" -Headers $localHeaders -TimeoutSec 2
-            $localOk = $true
-            break
-        } catch {}
-    }
+Write-Host "Запускаю локальный worker..." -ForegroundColor Yellow
+$cmd = if ($pythonMode -eq "py") { "Set-Location '$base'; py -3 -m ozon_buyer_mcp.worker" } else { "Set-Location '$base'; python -m ozon_buyer_mcp.worker" }
+Start-Process powershell.exe -ArgumentList @("-NoExit","-ExecutionPolicy","Bypass","-Command",$cmd)
+
+$localOk = $false
+for ($i=0; $i -lt 25; $i++) {
+    Start-Sleep -Seconds 1
+    try {
+        $null = Invoke-RestMethod "http://127.0.0.1:8765/health" -Headers $localHeaders -TimeoutSec 2
+        $localOk = $true
+        break
+    } catch {}
 }
 if (-not $localOk) { throw "Local worker не отвечает на 127.0.0.1:8765" }
 Write-Host "Local worker: OK" -ForegroundColor Green
@@ -140,6 +154,8 @@ while ($true) {
     try {
         $next = Invoke-RestMethod "$relay/next" -Headers $headers -TimeoutSec 35
         if ($next.ok -and $next.job) {
+            # Recover transparently if the user closed the external Chrome.
+            Ensure-ChromeCdp
             $job = $next.job
             $op = [string]$job.op
             if ($op -notin @("search-dom","delivery-dom","fetch-json")) {
