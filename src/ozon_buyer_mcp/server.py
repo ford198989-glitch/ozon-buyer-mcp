@@ -2,10 +2,13 @@ from __future__ import annotations
 import asyncio
 import os
 from mcp.server import MCPServer
+from .auth import auth_config, mcp_auth_options
 from .browser import OzonBrowser
 from .service import OzonService
 from . import __version__
-mcp = MCPServer("ozon-buyer")
+_transport = os.getenv("OZON_TRANSPORT", "stdio")
+_auth_options = mcp_auth_options(auth_config()) if _transport in {"http", "streamable-http"} else {}
+mcp = MCPServer("ozon-buyer", **_auth_options)
 browser = OzonBrowser()
 service = OzonService(browser)
 
