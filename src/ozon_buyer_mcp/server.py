@@ -4,8 +4,7 @@ import os
 from mcp.server import MCPServer
 from .browser import OzonBrowser
 from .service import OzonService
-
-VERSION = "0.4.0"
+from . import __version__
 mcp = MCPServer("ozon-buyer")
 browser = OzonBrowser()
 service = OzonService(browser)
@@ -14,7 +13,7 @@ service = OzonService(browser)
 async def ozon_health() -> dict:
     return {
         "ok": True,
-        "version": VERSION,
+        "version": __version__,
         "mode": "buyer-read-only",
         "writes_enabled": False,
         "orders_enabled": False,
