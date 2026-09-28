@@ -26,24 +26,47 @@ Expand-Archive -Force $tmpZip $tmpDir
 $src = Join-Path $tmpDir "ozon-buyer-mcp-main"
 Copy-Item (Join-Path $src "*") $base -Recurse -Force
 
-if (Test-Path $tokenFile) {
+function Test-WorkerToken {
+    param([string]$Candidate)
     try {
-        $secure = Get-Content $tokenFile -Raw | ConvertTo-SecureString
-        $Token = [System.Net.NetworkCredential]::new("", $secure).Password
+        # An unknown job ID returns 404 only after bearer authentication succeeds.
+        $null = Invoke-WebRequest -UseBasicParsing "$relay/result" -Method Post -Headers @{ Authorization = "Bearer $Candidate" } -ContentType "application/json" -Body '{"id":"connector-token-check","response":{}}' -TimeoutSec 15
+        return $false
     } catch {
-        Remove-Item $tokenFile -Force -ErrorAction SilentlyContinue
-        $Token = ""
+        $reply = $_.Exception.Response
+        if ($null -ne $reply) {
+            $code = [int]$reply.StatusCode
+            if ($code -eq 404) { return $true }
+            if ($code -eq 401) { return $false }
+        }
+        throw "Could not verify worker token with Railway relay: $($_.Exception.Message)"
     }
-} else {
-    $Token = ""
 }
 
+$Token = ""
+if (Test-Path $tokenFile) {
+    try {
+        # DPAPI output contains ASCII characters; Trim removes Set-Content's newline.
+        $cipher = (Get-Content $tokenFile -Raw -Encoding ASCII).Trim()
+        $secure = ConvertTo-SecureString $cipher
+        $Token = [System.Net.NetworkCredential]::new("", $secure).Password
+    } catch {
+        $Token = ""
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($Token)) {
+    if (-not (Test-WorkerToken $Token)) {
+        Write-Host "Saved worker token was rejected by Railway. Copy OZON_WORKER_TOKEN from the ozon-worker-relay service." -ForegroundColor Red
+        $Token = ""
+    }
+}
 if ([string]::IsNullOrWhiteSpace($Token)) {
-    Write-Host "First run: enter the Ozon worker token once. Windows will save it securely." -ForegroundColor Yellow
+    Write-Host "Enter OZON_WORKER_TOKEN from Railway once. It will be encrypted for this Windows account." -ForegroundColor Yellow
     $secure = Read-Host "OZON worker token" -AsSecureString
     $Token = [System.Net.NetworkCredential]::new("", $secure).Password
     if ([string]::IsNullOrWhiteSpace($Token)) { throw "Worker token is required" }
-    $secure | ConvertFrom-SecureString | Set-Content -Encoding UTF8 $tokenFile
+    if (-not (Test-WorkerToken $Token)) { throw "Relay rejected the token (401). Copy OZON_WORKER_TOKEN from the ozon-worker-relay service and retry." }
+    ConvertFrom-SecureString -SecureString $secure | Set-Content -Encoding ASCII $tokenFile
 }
 
 $pf86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
@@ -184,6 +207,10 @@ while ($true) {
             $null = Invoke-RestMethod "$relay/result" -Method Post -Headers $headers -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($resultJson)) -TimeoutSec 30
         }
     } catch {
+        $reply = $_.Exception.Response
+        if ($null -ne $reply -and [int]$reply.StatusCode -eq 401) {
+            throw "Railway rejected the worker token (401). Restart the connector and enter the current OZON_WORKER_TOKEN from ozon-worker-relay."
+        }
         Write-Host ("Relay reconnect: " + $_.Exception.Message) -ForegroundColor DarkYellow
         Start-Sleep -Seconds 3
     }
