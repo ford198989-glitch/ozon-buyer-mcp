@@ -1,6 +1,6 @@
 [project]
 name = "ozon-buyer-mcp"
-version = "0.6.1"
+version = "0.6.2"
 description = "Price Hunter MCP for buyer-side marketplace and web price comparison"
 readme = "README.md"
 requires-python = ">=3.12"
