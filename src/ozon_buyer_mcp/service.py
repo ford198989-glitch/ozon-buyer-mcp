@@ -92,13 +92,28 @@ def _query_relevance(query: str, title: str | None) -> float:
 def _market_offer_from_raw(marketplace: str, query: str, item: dict) -> MarketplaceOffer:
     title = str(item.get("title") or "") or None
     relevance, exact_match = _match_metrics(query, title)
+
+    # Browser price nodes sometimes contain current price, old price and bonus
+    # numbers in one DOM element. Prefer the first explicit RUB amount from the
+    # bounded card text when available; fall back to the structured worker value.
+    raw_text = str(item.get("text") or "")
+    text_prices = [
+        price_to_number(x)
+        for x in re.findall(r"(\d[\d\s\u00a0]{1,12})\s*₽", raw_text)
+    ]
+    text_prices = [p for p in text_prices if p]
+    raw_price = item.get("price_rub") if isinstance(item.get("price_rub"), int) else None
+    price = text_prices[0] if text_prices else raw_price
+    raw_old = item.get("old_price_rub") if isinstance(item.get("old_price_rub"), int) else None
+    old_price = next((p for p in text_prices[1:] if price and p > price), None) or raw_old
+
     return MarketplaceOffer(
         marketplace=marketplace,
         product_id=str(item.get("product_id") or "") or None,
         title=title,
         url=str(item.get("url") or "") or None,
-        price_rub=item.get("price_rub") if isinstance(item.get("price_rub"), int) else None,
-        old_price_rub=item.get("old_price_rub") if isinstance(item.get("old_price_rub"), int) else None,
+        price_rub=price,
+        old_price_rub=old_price,
         rating=float(item["rating"]) if isinstance(item.get("rating"), (int, float)) else None,
         reviews=int(item["reviews"]) if isinstance(item.get("reviews"), (int, float)) else None,
         delivery_text=str(item.get("delivery_text") or "") or None,
@@ -210,7 +225,7 @@ class OzonService:
         exact_priced = [x for x in priced if x.exact_match]
         relevant_priced = [x for x in priced if (x.relevance or 0.0) >= 0.65]
         cheapest = min(
-            exact_priced or relevant_priced or priced,
+            exact_priced or relevant_priced,
             key=lambda x: x.price_rub or 10**12,
             default=None,
         )
@@ -246,13 +261,8 @@ class OzonService:
                 x for x in result.offers
                 if x.marketplace == market
                 and x.price_rub is not None
-                and (x.relevance or 0.0) >= 0.45
+                and (x.exact_match or (x.relevance or 0.0) >= 0.65)
             ]
-            if not candidates:
-                candidates = [
-                    x for x in result.offers
-                    if x.marketplace == market and x.price_rub is not None
-                ]
             best = min(candidates, key=lambda x: x.price_rub or 10**12, default=None)
             if best and best.price_rub is not None:
                 best_prices.append(best.price_rub)
