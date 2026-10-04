@@ -1,4 +1,4 @@
-# Price Hunter MCP v0.6.1
+# Price Hunter MCP v0.6.2
 
 Read-only buyer-side Price Hunter for ChatGPT. It compares Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores through the same local Chrome profile; Ozon product details/reviews remain available.
 
@@ -194,9 +194,14 @@ Megamarket may still present an interactive CAPTCHA. The service does not bypass
 
 ## Current release summary
 
-- Version: `0.6.1`
+- Version: `0.6.2`
 - Production commit: `ccfaa5ead34e5f428583ccc5533106b1d2907ba2`
 - Production MCP: online
 - Production relay: online
 - Local worker: auto-updates from `main` when `START_OZON_MCP.cmd` is restarted
 - Canonical Yandex Disk documentation: `/ChatGPT/Ozon Buyer MCP/README.md`
+
+
+## v0.6.2 price parsing fix
+
+Marketplace and web parsers now treat a price element as one monetary value instead of concatenating every digit from a DOM block. This fixes inflated prices on Yandex Market, Megamarket and web stores when a price node contains current/old prices, bonuses or decimals. JSON-LD decimal prices such as `17600.00` are parsed as 17600 RUB rather than 1760000.
