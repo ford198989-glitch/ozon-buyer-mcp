@@ -1,6 +1,6 @@
-# Ozon Buyer MCP v0.4.1
+# Marketplace Buyer MCP v0.5.0
 
-Read-only MCP server for buyer-side Ozon research from ChatGPT.
+Read-only MCP server for buyer-side marketplace research from ChatGPT. Ozon, Wildberries and Yandex Market can be searched through the same local Chrome profile; Ozon product details/reviews remain available.
 
 ## Production status (2026-09-28)
 
@@ -30,6 +30,8 @@ This architecture is intentional: direct Railway/datacenter requests and Playwri
 - `ozon_get_price(product)`
 - `ozon_delivery(product)`
 - `ozon_compare(products)`
+- `market_search(query, marketplaces, limit_per_market)` — searches Ozon, Wildberries and Yandex Market together
+- `market_compare(query, marketplaces, limit_per_market)` — returns the cheapest relevant offer per marketplace and the best overall price
 
 The service is read-only: it does not perform login, cart, checkout, orders,
 favorites or other write actions. Sign-in to Ozon happens manually in the
@@ -138,3 +140,23 @@ If relay connection fails, verify the exact relay-domain VPN route. If Ozon itse
 
 If ChatGPT receives `401`, reconnect **Ozon Buyer MCP Personal** through Auth0 and check the owner account and `ozon:read` grant. A successful relay `/health` response alone does not verify OAuth access to `/mcp` or a live worker. If prices appear generic, confirm Ozon sign-in in the dedicated Chrome profile and compare the exact SKU in that same window.
 
+
+
+## Multi-market search (v0.5.0)
+
+Cross-market discovery uses the same privacy model as Ozon: Railway never logs in to a marketplace directly. The local Windows connector opens the rendered public/search pages in the dedicated Chrome profile and returns only product-card fields needed for comparison.
+
+Supported marketplace identifiers:
+
+- `ozon`
+- `wildberries` (alias: `wb`)
+- `yandex_market` (aliases: `yandex`, `market`)
+
+Example workflow:
+
+1. call `market_compare("Genau Stride X")`;
+2. inspect the best matching offer from each marketplace;
+3. compare price, rating, review count and delivery text;
+4. open the returned product URL before purchase.
+
+Marketplace pages are dynamic. Prices and delivery can depend on region, account, promotions and payment method. Cross-market matching uses query/title relevance, so exact model names produce the most reliable price comparison.
