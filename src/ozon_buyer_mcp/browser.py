@@ -155,6 +155,12 @@ class OzonBrowser:
             "подозрительная активность",
             "access denied",
             "forbidden",
+            "captcha",
+            "капча",
+            "вы не робот",
+            "не робот",
+            "проверка браузера",
+            "проверка безопасности",
         )
         for marker in markers:
             if marker in title or marker in body[:5000]:
@@ -199,7 +205,7 @@ class OzonBrowser:
                 response = await self._page.goto(
                     url,
                     wait_until="domcontentloaded",
-                    timeout=self._nav_timeout_ms,
+                    timeout=min(self._nav_timeout_ms, 60000),
                 )
                 await self._page.wait_for_timeout(wait_ms)
                 return response
@@ -225,7 +231,10 @@ class OzonBrowser:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=max(20, self._nav_timeout_ms // 1000 + 10)) as response:
+            # Keep the outer MCP->relay timeout longer than the local worker and relay
+            # deadlines. This prevents abandoned jobs whose late /result then becomes 404.
+            remote_timeout = max(130, self._nav_timeout_ms // 1000 + 20)
+            with urllib.request.urlopen(req, timeout=remote_timeout) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             try:
@@ -373,9 +382,9 @@ class OzonBrowser:
             response = await page.goto(
                 url,
                 wait_until="domcontentloaded",
-                timeout=self._nav_timeout_ms,
+                timeout=min(self._nav_timeout_ms, 30000),
             )
-            await page.wait_for_timeout(max(3500, self._challenge_wait_ms // 3))
+            await page.wait_for_timeout(max(2500, min(self._challenge_wait_ms // 3, 4000)))
 
             for _ in range(3):
                 await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight, 900))")
@@ -396,6 +405,10 @@ class OzonBrowser:
                 "captcha",
                 "капча",
                 "проверка браузера",
+                "хотим проверить",
+                "вы не робот",
+                "не робот",
+                "проверка безопасности",
             )
             if any(x in title or x in body[:6000] for x in blocked_markers):
                 raise OzonUpstreamError(f"{market} search page is blocked")
@@ -520,7 +533,7 @@ class OzonBrowser:
                     if ((!productTitle || productTitle.length < 5) && alt) productTitle = alt;
                     if (!productTitle || /₽/.test(productTitle)) productTitle = clean(a.innerText);
                     if (!productTitle || /₽/.test(productTitle)) {
-                      const lines = String(text || "").split(/\n+/).map(clean).filter(Boolean);
+                      const lines = String(text || "").split(/\\n+/).map(clean).filter(Boolean);
                       productTitle = lines.find((x) => !/₽/.test(x) && x.length >= 5 && x.length <= 240) || null;
                     }
 
@@ -563,11 +576,19 @@ class OzonBrowser:
             response = await search_page.goto(
                 market_search_url("web", query),
                 wait_until="domcontentloaded",
-                timeout=self._nav_timeout_ms,
+                timeout=min(self._nav_timeout_ms, 20000),
             )
-            await search_page.wait_for_timeout(max(2500, self._challenge_wait_ms // 4))
+            await search_page.wait_for_timeout(max(1800, min(self._challenge_wait_ms // 4, 3000)))
             if response and response.status >= 400:
                 raise OzonUpstreamError(f"web search returned HTTP {response.status}")
+
+            search_title = (await search_page.title()).lower()
+            search_body = (await search_page.locator("body").inner_text(timeout=7000)).lower()
+            if any(marker in search_title or marker in search_body[:5000] for marker in (
+                "captcha", "капча", "вы не робот", "не робот",
+                "подозрительная активность", "проверка браузера",
+            )):
+                raise OzonUpstreamError("web search page is blocked")
 
             candidates = await search_page.evaluate(
                 """(limit) => {
@@ -602,7 +623,8 @@ class OzonBrowser:
                 pass
 
         offers: list[dict[str, Any]] = []
-        for candidate in list(candidates or [])[: max(limit * 2, limit)]:
+        candidate_budget = max(3, min(limit, 5))
+        for candidate in list(candidates or [])[:candidate_budget]:
             if len(offers) >= limit:
                 break
             page = await self._context.new_page()
@@ -610,7 +632,7 @@ class OzonBrowser:
                 response = await page.goto(
                     str(candidate.get("url") or ""),
                     wait_until="domcontentloaded",
-                    timeout=min(self._nav_timeout_ms, 45000),
+                    timeout=min(self._nav_timeout_ms, 10000),
                 )
                 if response and response.status >= 400:
                     continue
