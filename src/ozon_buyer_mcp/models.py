@@ -93,3 +93,28 @@ class CompareItem(BaseModel):
 class CompareResponse(BaseModel):
     count: int = 0
     items: list[CompareItem] = Field(default_factory=list)
+
+
+class MarketplaceOffer(BaseModel):
+    marketplace: str
+    product_id: str | None = None
+    title: str | None = None
+    url: str | None = None
+    price_rub: int | None = None
+    old_price_rub: int | None = None
+    rating: float | None = None
+    reviews: int | None = None
+    delivery_text: str | None = None
+    seller: str | None = None
+    image: str | None = None
+    relevance: float | None = None
+
+
+class MarketplaceSearchResponse(BaseModel):
+    query: str
+    marketplaces: list[str] = Field(default_factory=list)
+    count: int = 0
+    offers: list[MarketplaceOffer] = Field(default_factory=list)
+    cheapest: MarketplaceOffer | None = None
+    errors: dict[str, str] = Field(default_factory=dict)
+    note: str | None = None
