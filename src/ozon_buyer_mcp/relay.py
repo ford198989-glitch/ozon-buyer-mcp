@@ -43,7 +43,7 @@ async def submit(request: Request) -> JSONResponse:
     body = await request.json()
     op = str(body.get("op") or "")
     payload = body.get("payload") or {}
-    if op not in {"search-dom", "delivery-dom", "fetch-json"}:
+    if op not in {"search-dom", "market-search-dom", "delivery-dom", "fetch-json"}:
         return JSONResponse({"ok": False, "error": "unsupported operation"}, status_code=400)
 
     job_id = uuid.uuid4().hex
@@ -55,7 +55,7 @@ async def submit(request: Request) -> JSONResponse:
         result = await asyncio.wait_for(future, timeout=JOB_TIMEOUT)
         return JSONResponse(result)
     except asyncio.TimeoutError:
-        return JSONResponse({"ok": False, "error": "local Ozon worker timeout"}, status_code=504)
+        return JSONResponse({"ok": False, "error": "local marketplace worker timeout"}, status_code=504)
     finally:
         waiters.pop(job_id, None)
 
