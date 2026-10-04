@@ -25,7 +25,7 @@ async def ozon_health() -> dict:
         "headless": os.getenv("OZON_HEADLESS", "0") == "1",
         "proxy_enabled": bool((os.getenv("OZON_PROXY_SERVER") or "").strip()),
         "remote_worker_enabled": bool((os.getenv("OZON_REMOTE_WORKER_URL") or "").strip()),
-        "marketplaces": ["ozon", "wildberries", "yandex_market"],
+        "marketplaces": ["ozon", "wildberries", "yandex_market", "megamarket", "avito", "web"],
     }
 
 @mcp.tool()
@@ -40,6 +40,10 @@ async def market_search(query: str, marketplaces: list[str] | None = None, limit
 @mcp.tool()
 async def market_compare(query: str, marketplaces: list[str] | None = None, limit_per_market: int = 8) -> dict:
     return await service.compare_marketplaces(query, marketplaces, limit_per_market)
+
+@mcp.tool()
+async def best_buy(query: str, sources: list[str] | None = None, limit_per_source: int = 6, include_avito: bool = True) -> dict:
+    return await service.best_buy(query, sources, limit_per_source, include_avito)
 
 @mcp.tool()
 async def ozon_product(product: str, include_description: bool = True) -> dict:
