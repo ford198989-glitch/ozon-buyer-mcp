@@ -52,5 +52,5 @@ def test_marketplace_models_roundtrip():
         cheapest=offer,
     ).model_dump()
     assert out["cheapest"]["price_rub"] == 1000
-    assert out["items"][0]["marketplace"] == "wildberries" if "items" in out else True
+    assert out["offers"][0]["marketplace"] == "wildberries"
     assert out["offers"][0]["exact_match"] is True
