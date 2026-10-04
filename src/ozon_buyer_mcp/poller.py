@@ -42,6 +42,13 @@ async def execute(job: dict[str, Any]) -> dict[str, Any]:
         if op == "search-dom":
             items = await browser.search_dom(str(payload.get("path") or ""), limit=int(payload.get("limit") or 12))
             return {"ok": True, "items": items}
+        if op == "market-search-dom":
+            items = await browser.market_search_dom(
+                str(payload.get("marketplace") or ""),
+                str(payload.get("query") or ""),
+                limit=int(payload.get("limit") or 12),
+            )
+            return {"ok": True, "items": items}
         if op == "fetch-json":
             data = await browser.fetch_json(str(payload.get("path") or ""), retries=int(payload.get("retries") or 1))
             return {"ok": True, "data": data}
@@ -53,8 +60,8 @@ async def execute(job: dict[str, Any]) -> dict[str, Any]:
 async def run() -> None:
     if not RELAY_URL or not TOKEN:
         raise RuntimeError("OZON_RELAY_URL and OZON_WORKER_TOKEN are required")
-    print(f"Ozon local worker connected to relay: {RELAY_URL}", flush=True)
-    print("Keep this window open while using Ozon in ChatGPT.", flush=True)
+    print(f"Marketplace local worker connected to relay: {RELAY_URL}", flush=True)
+    print("Keep this window open while using marketplace search in ChatGPT.", flush=True)
     while True:
         try:
             answer = await _request("GET", "/next", timeout=35)
