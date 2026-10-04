@@ -362,6 +362,9 @@ class OzonBrowser:
             )
             return list(data.get("items") or [])
 
+        if market == "web":
+            return await self._web_search_dom(query, limit=limit)
+
         await self.ensure_ready()
         assert self._context is not None
         page = await self._context.new_page()
@@ -392,6 +395,7 @@ class OzonBrowser:
                 "подозрительная активность",
                 "captcha",
                 "капча",
+                "проверка браузера",
             )
             if any(x in title or x in body[:6000] for x in blocked_markers):
                 raise OzonUpstreamError(f"{market} search page is blocked")
@@ -425,6 +429,14 @@ class OzonBrowser:
                     anchors = Array.from(document.querySelectorAll(
                       'a[href*="/catalog/"][href*="/detail.aspx"]'
                     ));
+                  } else if (marketplace === "avito") {
+                    anchors = Array.from(document.querySelectorAll(
+                      'a[data-marker="item-title"], a[itemprop="url"]'
+                    ));
+                  } else if (marketplace === "megamarket") {
+                    anchors = Array.from(document.querySelectorAll(
+                      'a[href*="/catalog/details/"], a[href*="/catalog/"]'
+                    ));
                   } else {
                     anchors = Array.from(document.querySelectorAll(
                       'a[href*="/card/"], a[href*="/product--"], a[href*="/product/"]'
@@ -442,12 +454,15 @@ class OzonBrowser:
                     if (marketplace === "wildberries") {
                       const m = href.match(/\/catalog\/(\d+)\/detail\.aspx/i);
                       productId = m ? m[1] : null;
+                    } else if (marketplace === "avito") {
+                      const m = href.match(/_(\d{6,})(?:\?|$)/);
+                      productId = m ? m[1] : null;
                     } else {
                       try {
                         const u = new URL(href);
                         productId = u.searchParams.get("sku") || u.searchParams.get("uniqueId");
                         if (!productId) {
-                          const m = u.pathname.match(/\/(\d{5,})(?:\/|$)/);
+                          const m = u.pathname.match(/(?:-|\/)(\d{5,})(?:\/|$)/);
                           productId = m ? m[1] : null;
                         }
                       } catch (_) {}
@@ -460,29 +475,44 @@ class OzonBrowser:
                     for (let i = 0; i < 8 && node && node.parentElement; i++) {
                       node = node.parentElement;
                       const t = clean(node.innerText);
-                      if (t.length >= 25 && t.length <= 2400 && /₽/.test(t)) {
+                      if (t.length >= 20 && t.length <= 2600 && /₽/.test(t)) {
                         text = t;
                         break;
                       }
                     }
                     if (!/₽/.test(text)) continue;
 
-                    const selector = marketplace === "wildberries"
-                      ? '.price__lower-price, ins.price__lower-price, [class*="price__lower-price"]'
-                      : '[data-auto="snippet-price-current"], [data-auto="price-value"], [data-zone-name="price"]';
+                    let selector = '[data-auto="snippet-price-current"], [data-auto="price-value"], [data-zone-name="price"]';
+                    if (marketplace === "wildberries") {
+                      selector = '.price__lower-price, ins.price__lower-price, [class*="price__lower-price"]';
+                    } else if (marketplace === "avito") {
+                      selector = '[itemprop="price"], [data-marker="item-price"]';
+                    } else if (marketplace === "megamarket") {
+                      selector = '[class*="price"], [data-test*="price"], [data-qa*="price"]';
+                    }
                     const directPriceNode = node?.querySelector?.(selector);
                     const allPrices = prices(text);
-                    const price = num(directPriceNode?.innerText) || allPrices[0] || null;
+                    const directPrice = num(
+                      directPriceNode?.getAttribute?.("content") ||
+                      directPriceNode?.innerText
+                    );
+                    const price = directPrice || allPrices[0] || null;
                     if (!price) continue;
                     const oldPrice = allPrices.find((p) => p > price) || null;
 
-                    const titleSelectors = marketplace === "wildberries"
-                      ? ['.product-card__name', '.product-card__brand', '[class*="product-card__name"]']
-                      : ['[data-auto="snippet-title"]', 'h3', 'h2'];
+                    let titleSelectors = ['[data-auto="snippet-title"]', 'h3', 'h2'];
+                    if (marketplace === "wildberries") {
+                      titleSelectors = ['.product-card__name', '.product-card__brand', '[class*="product-card__name"]'];
+                    } else if (marketplace === "avito") {
+                      titleSelectors = ['[data-marker="item-title"]', '[itemprop="name"]', 'h3'];
+                    } else if (marketplace === "megamarket") {
+                      titleSelectors = ['[class*="title"]', '[data-test*="title"]', 'h3', 'h2'];
+                    }
+
                     const titleParts = [];
                     for (const sel of titleSelectors) {
                       const t = clean(node?.querySelector?.(sel)?.innerText);
-                      if (t && !titleParts.includes(t)) titleParts.push(t);
+                      if (t && t.length <= 300 && !titleParts.includes(t)) titleParts.push(t);
                     }
                     const img = node?.querySelector?.("img") || a.querySelector("img");
                     const alt = clean(img?.getAttribute?.("alt"));
@@ -506,6 +536,8 @@ class OzonBrowser:
                       delivery_text: delivery(text),
                       seller: null,
                       image: img ? (img.currentSrc || img.src || "") : "",
+                      condition: marketplace === "avito" ? "unknown" : "new",
+                      price_confidence: directPrice ? "high" : "medium",
                       text,
                     });
                     seen.add(key);
@@ -521,6 +553,171 @@ class OzonBrowser:
                 await page.close()
             except Exception:
                 pass
+
+    async def _web_search_dom(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        await self.ensure_ready()
+        assert self._context is not None
+
+        search_page = await self._context.new_page()
+        try:
+            response = await search_page.goto(
+                market_search_url("web", query),
+                wait_until="domcontentloaded",
+                timeout=self._nav_timeout_ms,
+            )
+            await search_page.wait_for_timeout(max(2500, self._challenge_wait_ms // 4))
+            if response and response.status >= 400:
+                raise OzonUpstreamError(f"web search returned HTTP {response.status}")
+
+            candidates = await search_page.evaluate(
+                """(limit) => {
+                  const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+                  const blocked = [
+                    "yandex.ru", "ya.ru", "ozon.ru", "wildberries.ru",
+                    "market.yandex.ru", "megamarket.ru", "avito.ru"
+                  ];
+                  const out = [];
+                  const seen = new Set();
+                  for (const a of Array.from(document.querySelectorAll('a[href^="http"]'))) {
+                    let u;
+                    try { u = new URL(a.href); } catch (_) { continue; }
+                    const host = u.hostname.replace(/^www\./, "").toLowerCase();
+                    if (blocked.some((x) => host === x || host.endsWith("." + x))) continue;
+                    const text = clean(a.innerText);
+                    if (!text || text.length < 4 || text.length > 280) continue;
+                    const key = u.origin + u.pathname;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    out.push({url: a.href, title: text, host});
+                    if (out.length >= limit * 3) break;
+                  }
+                  return out;
+                }""",
+                max(1, min(limit, 10)),
+            )
+        finally:
+            try:
+                await search_page.close()
+            except Exception:
+                pass
+
+        offers: list[dict[str, Any]] = []
+        for candidate in list(candidates or [])[: max(limit * 2, limit)]:
+            if len(offers) >= limit:
+                break
+            page = await self._context.new_page()
+            try:
+                response = await page.goto(
+                    str(candidate.get("url") or ""),
+                    wait_until="domcontentloaded",
+                    timeout=min(self._nav_timeout_ms, 45000),
+                )
+                if response and response.status >= 400:
+                    continue
+                await page.wait_for_timeout(1200)
+                raw = await page.evaluate(
+                    """() => {
+                      const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+                      const num = (v) => {
+                        const d = String(v ?? "").replace(/[^0-9]/g, "");
+                        return d ? Number(d) : null;
+                      };
+                      const rub = (s) => {
+                        const m = String(s || "").match(/(\d[\d\s\u00a0]{1,12})\s*₽/);
+                        return m ? num(m[1]) : null;
+                      };
+                      const walk = (node, found=[]) => {
+                        if (!node || found.length > 20) return found;
+                        if (Array.isArray(node)) {
+                          for (const x of node) walk(x, found);
+                          return found;
+                        }
+                        if (typeof node !== "object") return found;
+                        const type = node["@type"];
+                        const types = Array.isArray(type) ? type : [type];
+                        if (types.some((x) => String(x).toLowerCase() === "product")) found.push(node);
+                        for (const v of Object.values(node)) {
+                          if (typeof v === "object") walk(v, found);
+                        }
+                        return found;
+                      };
+
+                      const products = [];
+                      for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+                        try { walk(JSON.parse(s.textContent || "{}"), products); } catch (_) {}
+                      }
+
+                      for (const p of products) {
+                        const offers = Array.isArray(p.offers) ? p.offers[0] : p.offers;
+                        const agg = p.aggregateRating || {};
+                        const price = num(
+                          offers?.price ??
+                          offers?.lowPrice ??
+                          offers?.priceSpecification?.price
+                        );
+                        if (price) {
+                          return {
+                            title: clean(p.name || document.querySelector("h1")?.innerText || document.title),
+                            price_rub: price,
+                            old_price_rub: null,
+                            rating: Number(agg.ratingValue) || null,
+                            reviews: num(agg.reviewCount || agg.ratingCount),
+                            image: Array.isArray(p.image) ? p.image[0] : (p.image || ""),
+                            price_confidence: "high",
+                          };
+                        }
+                      }
+
+                      const priceSelectors = [
+                        '[itemprop="price"]',
+                        'meta[property="product:price:amount"]',
+                        'meta[property="og:price:amount"]',
+                        '[data-price]',
+                        '[class*="price"]'
+                      ];
+                      let price = null;
+                      for (const sel of priceSelectors) {
+                        const el = document.querySelector(sel);
+                        if (!el) continue;
+                        price = num(
+                          el.getAttribute?.("content") ||
+                          el.getAttribute?.("data-price") ||
+                          el.innerText
+                        );
+                        if (price && price >= 50) break;
+                      }
+                      if (!price) {
+                        const body = clean(document.body?.innerText || "");
+                        price = rub(body);
+                      }
+                      if (!price) return null;
+                      return {
+                        title: clean(document.querySelector("h1")?.innerText || document.title),
+                        price_rub: price,
+                        old_price_rub: null,
+                        rating: null,
+                        reviews: null,
+                        image: document.querySelector('meta[property="og:image"]')?.content || "",
+                        price_confidence: "medium",
+                      };
+                    }"""
+                )
+                if not isinstance(raw, dict) or not raw.get("price_rub"):
+                    continue
+                raw["product_id"] = None
+                raw["url"] = page.url
+                raw["seller"] = str(candidate.get("host") or "")
+                raw["delivery_text"] = None
+                raw["condition"] = "new"
+                offers.append(raw)
+            except Exception:
+                continue
+            finally:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+        return offers[:limit]
 
     async def delivery_dom(self, path: str) -> list[str]:
         if self._remote_worker_url:

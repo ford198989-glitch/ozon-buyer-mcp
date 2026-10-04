@@ -1,6 +1,6 @@
-# Marketplace Buyer MCP v0.5.0
+# Price Hunter MCP v0.6.0
 
-Read-only MCP server for buyer-side marketplace research from ChatGPT. Ozon, Wildberries and Yandex Market can be searched through the same local Chrome profile; Ozon product details/reviews remain available.
+Read-only buyer-side Price Hunter for ChatGPT. It compares Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores through the same local Chrome profile; Ozon product details/reviews remain available.
 
 ## Production status (2026-09-28)
 
@@ -31,7 +31,8 @@ This architecture is intentional: direct Railway/datacenter requests and Playwri
 - `ozon_delivery(product)`
 - `ozon_compare(products)`
 - `market_search(query, marketplaces, limit_per_market)` — searches Ozon, Wildberries and Yandex Market together
-- `market_compare(query, marketplaces, limit_per_market)` — returns the cheapest relevant offer per marketplace and the best overall price
+- `market_compare(query, marketplaces, limit_per_market)` — returns the cheapest relevant offer per source and the best overall price
+- `best_buy(query, sources, limit_per_source, include_avito)` — Price Hunter mode: exact-model matching, best new offer, separate Avito result, savings vs Ozon
 
 The service is read-only: it does not perform login, cart, checkout, orders,
 favorites or other write actions. Sign-in to Ozon happens manually in the
@@ -151,6 +152,9 @@ Supported marketplace identifiers:
 - `ozon`
 - `wildberries` (alias: `wb`)
 - `yandex_market` (aliases: `yandex`, `market`)
+- `megamarket` (alias: `mega`)
+- `avito` (alias: `авито`) — kept separate from new-goods winner
+- `web` (aliases: `internet`, `интернет`) — discovers prices from ordinary web stores via Yandex search and validates product pages
 
 Example workflow:
 
@@ -160,3 +164,18 @@ Example workflow:
 4. open the returned product URL before purchase.
 
 Marketplace pages are dynamic. Prices and delivery can depend on region, account, promotions and payment method. Cross-market matching uses query/title relevance, so exact model names produce the most reliable price comparison.
+
+
+## Price Hunter (v0.6.0)
+
+`best_buy` is intended for exact product/model shopping. It keeps short model tokens such as `X` and numeric/alphanumeric model identifiers such as `S50`, so similarly named products are less likely to be mixed together.
+
+Default sources are Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores. Avito is reported separately so used/second-hand listings do not automatically beat new retail offers.
+
+The generic `web` source discovers candidate stores through Yandex Search, then opens a limited number of product pages in the local Chrome profile. It prefers JSON-LD Product/Offer prices and falls back to rendered page price elements. Every web result includes price-confidence metadata; low-confidence prices are excluded from `best_buy`.
+
+Example:
+
+`best_buy("Genau Stride X")`
+
+The response includes the best new offer, best Avito offer (if enabled), best Ozon offer, savings versus Ozon, and the best matching result per source.

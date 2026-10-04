@@ -4,7 +4,7 @@ import json
 import re
 from urllib.parse import quote
 from .browser import OzonBrowser
-from .marketplaces import normalize_marketplaces
+from .marketplaces import NEW_GOODS_MARKETPLACES, normalize_marketplaces
 from .models import CompareItem, CompareResponse, DeliveryResponse, MarketplaceOffer, MarketplaceSearchResponse, PriceResponse, ProductDetails, ProductSummary, ReviewsResponse, SearchResponse
 from .parsers import delivery_candidates, parse_details, parse_reviews, product_path, price_to_number
 
@@ -56,23 +56,46 @@ def _summary_from_dom(card: dict) -> ProductSummary:
         image=str(card.get("image") or "") or None,
     )
 
-def _query_relevance(query: str, title: str | None) -> float:
-    q = set(re.findall(r"[a-zа-яё0-9]+", query.lower()))
-    t = set(re.findall(r"[a-zа-яё0-9]+", (title or "").lower()))
-    q = {x for x in q if len(x) > 1}
+def _match_metrics(query: str, text: str | None) -> tuple[float, bool]:
+    q_all = re.findall(r"[a-zа-яё0-9]+", str(query or "").lower())
+    t = set(re.findall(r"[a-zа-яё0-9]+", str(text or "").lower()))
+    q = {
+        x for x in q_all
+        if len(x) > 1 or re.fullmatch(r"[a-z0-9]", x)
+    }
     if not q:
-        return 0.0
+        return 0.0, False
+
     overlap = len(q & t) / len(q)
-    if query.lower() in (title or "").lower():
+    normalized_query = " ".join(q_all)
+    normalized_text = " ".join(re.findall(r"[a-zа-яё0-9]+", str(text or "").lower()))
+    if normalized_query and normalized_query in normalized_text:
         overlap = min(1.0, overlap + 0.2)
-    return round(overlap, 3)
+
+    model_tokens = {
+        x for x in q
+        if any(ch.isdigit() for ch in x)
+        or (len(x) <= 2 and re.fullmatch(r"[a-z0-9]+", x))
+    }
+    exact = q.issubset(t) or (
+        bool(model_tokens)
+        and model_tokens.issubset(t)
+        and overlap >= 0.75
+    )
+    return round(overlap, 3), exact
+
+
+def _query_relevance(query: str, title: str | None) -> float:
+    return _match_metrics(query, title)[0]
 
 
 def _market_offer_from_raw(marketplace: str, query: str, item: dict) -> MarketplaceOffer:
+    title = str(item.get("title") or "") or None
+    relevance, exact_match = _match_metrics(query, title)
     return MarketplaceOffer(
         marketplace=marketplace,
         product_id=str(item.get("product_id") or "") or None,
-        title=str(item.get("title") or "") or None,
+        title=title,
         url=str(item.get("url") or "") or None,
         price_rub=item.get("price_rub") if isinstance(item.get("price_rub"), int) else None,
         old_price_rub=item.get("old_price_rub") if isinstance(item.get("old_price_rub"), int) else None,
@@ -81,7 +104,10 @@ def _market_offer_from_raw(marketplace: str, query: str, item: dict) -> Marketpl
         delivery_text=str(item.get("delivery_text") or "") or None,
         seller=str(item.get("seller") or "") or None,
         image=str(item.get("image") or "") or None,
-        relevance=_query_relevance(query, str(item.get("title") or "")),
+        relevance=relevance,
+        exact_match=exact_match,
+        condition=str(item.get("condition") or "") or ("unknown" if marketplace == "avito" else "new"),
+        price_confidence=str(item.get("price_confidence") or "") or "medium",
     )
 
 
@@ -137,6 +163,10 @@ class OzonService:
                 if market == "ozon":
                     result = await self.search(query, limit=limit_per_market)
                     for item in result.items:
+                        match_text = " ".join(
+                            x for x in [item.title, item.discount_text] if x
+                        )
+                        relevance, exact_match = _match_metrics(query, match_text)
                         offers.append(MarketplaceOffer(
                             marketplace="ozon",
                             product_id=item.sku,
@@ -148,7 +178,10 @@ class OzonService:
                             reviews=item.reviews,
                             delivery_text=item.discount_text,
                             image=item.image,
-                            relevance=_query_relevance(query, item.title),
+                            relevance=relevance,
+                            exact_match=exact_match,
+                            condition="new",
+                            price_confidence="high",
                         ))
                 else:
                     items = await self.browser.market_search_dom(
@@ -170,10 +203,14 @@ class OzonService:
                 x.price_rub if x.price_rub is not None else 10**12,
             )
         )
-        priced = [x for x in offers if x.price_rub is not None]
-        relevant_priced = [x for x in priced if (x.relevance or 0.0) >= 0.45]
+        priced = [
+            x for x in offers
+            if x.price_rub is not None and x.marketplace != "avito"
+        ]
+        exact_priced = [x for x in priced if x.exact_match]
+        relevant_priced = [x for x in priced if (x.relevance or 0.0) >= 0.65]
         cheapest = min(
-            relevant_priced or priced,
+            exact_priced or relevant_priced or priced,
             key=lambda x: x.price_rub or 10**12,
             default=None,
         )
@@ -238,6 +275,110 @@ class OzonService:
             "savings_vs_most_expensive_market_rub": savings,
             "errors": result.errors,
             "note": result.note,
+        }
+
+    async def best_buy(
+        self,
+        query: str,
+        sources: list[str] | None = None,
+        limit_per_source: int = 6,
+        include_avito: bool = True,
+    ) -> dict:
+        markets = normalize_marketplaces(sources)
+        if not include_avito:
+            markets = [x for x in markets if x != "avito"]
+        result = await self.marketplace_search(
+            query=query,
+            marketplaces=markets,
+            limit_per_market=limit_per_source,
+        )
+
+        def acceptable(x: MarketplaceOffer) -> bool:
+            if x.price_rub is None:
+                return False
+            if x.price_confidence == "low":
+                return False
+            return x.exact_match or (x.relevance or 0.0) >= 0.68
+
+        new_offers = [
+            x for x in result.offers
+            if x.marketplace in NEW_GOODS_MARKETPLACES and acceptable(x)
+        ]
+        avito_offers = [
+            x for x in result.offers
+            if x.marketplace == "avito" and acceptable(x)
+        ]
+
+        if not new_offers:
+            new_offers = [
+                x for x in result.offers
+                if x.marketplace in NEW_GOODS_MARKETPLACES
+                and x.price_rub is not None
+                and (x.relevance or 0.0) >= 0.55
+            ]
+
+        best_new = min(
+            new_offers,
+            key=lambda x: x.price_rub or 10**12,
+            default=None,
+        )
+        best_avito = min(
+            avito_offers,
+            key=lambda x: x.price_rub or 10**12,
+            default=None,
+        )
+
+        by_source = []
+        for market in result.marketplaces:
+            candidates = [
+                x for x in result.offers
+                if x.marketplace == market and acceptable(x)
+            ]
+            best = min(
+                candidates,
+                key=lambda x: x.price_rub or 10**12,
+                default=None,
+            )
+            by_source.append({
+                "source": market,
+                "best_offer": best.model_dump() if best else None,
+            })
+
+        ozon_candidates = [
+            x for x in new_offers if x.marketplace == "ozon"
+        ]
+        best_ozon = min(
+            ozon_candidates,
+            key=lambda x: x.price_rub or 10**12,
+            default=None,
+        )
+        savings_vs_ozon = None
+        if (
+            best_new and best_new.price_rub is not None
+            and best_ozon and best_ozon.price_rub is not None
+        ):
+            savings_vs_ozon = best_ozon.price_rub - best_new.price_rub
+
+        return {
+            "query": query,
+            "best_new_offer": best_new.model_dump() if best_new else None,
+            "best_avito_offer": best_avito.model_dump() if best_avito else None,
+            "best_ozon_offer": best_ozon.model_dump() if best_ozon else None,
+            "savings_vs_ozon_rub": savings_vs_ozon,
+            "by_source": by_source,
+            "offers_checked": result.count,
+            "errors": result.errors,
+            "rules": {
+                "avito_separate_from_new": True,
+                "minimum_relevance": 0.68,
+                "exact_model_match_preferred": True,
+                "low_confidence_prices_excluded": True,
+            },
+            "note": (
+                "Best new offer excludes Avito. Web-store prices are taken from "
+                "structured product data or rendered pages and should be verified "
+                "on the linked product page before purchase."
+            ),
         }
 
     async def product(self, product: str, include_description: bool = True) -> ProductDetails:

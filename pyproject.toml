@@ -1,7 +1,7 @@
 [project]
 name = "ozon-buyer-mcp"
-version = "0.5.0"
-description = "Read-only MCP server for buyer-side marketplace search and comparison"
+version = "0.6.0"
+description = "Price Hunter MCP for buyer-side marketplace and web price comparison"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
