@@ -108,6 +108,9 @@ class MarketplaceOffer(BaseModel):
     seller: str | None = None
     image: str | None = None
     relevance: float | None = None
+    exact_match: bool = False
+    condition: str | None = None
+    price_confidence: str | None = None
 
 
 class MarketplaceSearchResponse(BaseModel):
