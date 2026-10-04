@@ -14,7 +14,7 @@ import uvicorn
 
 SERVER_TOKEN = (os.getenv("OZON_RELAY_SERVER_TOKEN") or "").strip()
 WORKER_TOKEN = (os.getenv("OZON_WORKER_TOKEN") or "").strip()
-JOB_TIMEOUT = int(os.getenv("OZON_RELAY_JOB_TIMEOUT", "120"))
+JOB_TIMEOUT = int(os.getenv("OZON_RELAY_JOB_TIMEOUT", "110"))
 
 queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 waiters: dict[str, asyncio.Future] = {}
