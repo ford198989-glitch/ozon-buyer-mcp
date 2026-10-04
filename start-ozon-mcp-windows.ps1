@@ -198,7 +198,7 @@ while ($true) {
             } else {
                 try {
                     $payloadJson = $job.payload | ConvertTo-Json -Depth 30 -Compress
-                    $response = Invoke-RestMethod "http://127.0.0.1:8765/$op" -Method Post -Headers $localHeaders -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($payloadJson)) -TimeoutSec 120
+                    $response = Invoke-RestMethod "http://127.0.0.1:8765/$op" -Method Post -Headers $localHeaders -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($payloadJson)) -TimeoutSec 90
                 } catch {
                     $response = @{ ok=$false; error=("local worker error: " + $_.Exception.Message) }
                 }
