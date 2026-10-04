@@ -35,7 +35,7 @@ def _authorized(request: Request) -> bool:
 async def health(request: Request) -> JSONResponse:
     if not _authorized(request):
         return _json({"ok": False, "error": "unauthorized"}, status_code=401)
-    return _json({"ok": True, "worker": "ozon-local", "headless": os.getenv("OZON_HEADLESS", "0") == "1"})
+    return _json({"ok": True, "worker": "marketplace-local", "headless": os.getenv("OZON_HEADLESS", "0") == "1"})
 
 
 async def search_dom(request: Request) -> JSONResponse:
@@ -52,6 +52,24 @@ async def search_dom(request: Request) -> JSONResponse:
         return _json({"ok": False, "error": str(exc)})
     except Exception as exc:
         print(f"search-dom error: {type(exc).__name__}: {exc}", flush=True)
+        return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+
+async def market_search_dom(request: Request) -> JSONResponse:
+    if not _authorized(request):
+        return _json({"ok": False, "error": "unauthorized"}, status_code=401)
+    data = await request.json()
+    marketplace = str(data.get("marketplace") or "")
+    query = str(data.get("query") or "")
+    limit = max(1, min(int(data.get("limit") or 12), 30))
+    try:
+        items = await browser.market_search_dom(marketplace, query, limit=limit)
+        return _json({"ok": True, "items": items})
+    except OzonUpstreamError as exc:
+        print(f"market-search-dom upstream error: {exc}", flush=True)
+        return _json({"ok": False, "error": str(exc)})
+    except Exception as exc:
+        print(f"market-search-dom error: {type(exc).__name__}: {exc}", flush=True)
         return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
@@ -96,6 +114,7 @@ app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
         Route("/search-dom", search_dom, methods=["POST"]),
+        Route("/market-search-dom", market_search_dom, methods=["POST"]),
         Route("/delivery-dom", delivery_dom, methods=["POST"]),
         Route("/fetch-json", fetch_json, methods=["POST"]),
     ],
