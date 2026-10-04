@@ -31,6 +31,33 @@ async def ozon_health() -> dict:
 @mcp.tool()
 async def ozon_search(query: str, limit: int = 12, sort: str = "popular",
                       price_min: int | None = None, price_max: int | None = None) -> dict:
+    # Backward-compatible bridge for ChatGPT connectors that still expose the
+    # pre-v0.5 frozen tool snapshot. The schema already accepts an arbitrary
+    # string for `sort`, so these modes unlock the newer multi-market tools
+    # without requiring the connector to be recreated first.
+    compat_mode = str(sort or "popular").strip().lower()
+    compat_limit = max(1, min(int(limit), 20))
+    if compat_mode in {"best_buy", "best", "price_hunter"}:
+        return await service.best_buy(
+            query=query,
+            sources=None,
+            limit_per_source=compat_limit,
+            include_avito=True,
+        )
+    if compat_mode in {"market_compare", "compare_all"}:
+        return await service.compare_marketplaces(
+            query=query,
+            marketplaces=None,
+            limit_per_market=compat_limit,
+        )
+    if compat_mode in {"market_search", "all_markets"}:
+        return (
+            await service.marketplace_search(
+                query=query,
+                marketplaces=None,
+                limit_per_market=compat_limit,
+            )
+        ).model_dump()
     return (await service.search(query, limit, sort, price_min, price_max)).model_dump()
 
 @mcp.tool()
