@@ -2,11 +2,13 @@
 
 Read-only buyer-side Price Hunter for ChatGPT. It compares Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores through the same local Chrome profile; Ozon product details/reviews remain available.
 
-## Production status (2026-09-28)
+## Production status (2026-10-04)
 
-The protected build is deployed on Railway. The ChatGPT connector **Ozon Buyer MCP Personal** uses Auth0 OAuth with the `ozon:read` scope. The owner manually signs in to Ozon in the dedicated Chrome profile on their Windows PC; product tools then read the prices rendered for that profile. An end-to-end check of SKU `2568217536` matched the prices shown in that Chrome window (380 RUB with Ozon Card, 420 RUB without) at the time of the check. These prices are an example, not a current-price guarantee.
+The protected v0.6.0 build is deployed on Railway. Both production services — `ozon-buyer-mcp-live` and `ozon-worker-relay` — are online. The ChatGPT connector **Ozon Buyer MCP Personal** still uses Auth0 OAuth with the existing `ozon:read` scope name for backward compatibility, although the service now covers multiple marketplaces and web stores.
 
-The Windows connector must be running for live Ozon requests. The old anonymous ChatGPT connector is incompatible with the protected `/mcp` endpoint and receives `401`.
+The owner manually signs in to Ozon in the dedicated Chrome profile on their Windows PC when personal Ozon prices are needed. Other marketplace and web searches use the same local Chrome profile and rendered pages. An earlier end-to-end check of SKU `2568217536` matched the prices shown in that Chrome window (380 RUB with Ozon Card, 420 RUB without) at the time of the check; those numbers are only a historical validation example.
+
+The Windows connector must be running for live marketplace/web requests. The old anonymous ChatGPT connector is incompatible with the protected `/mcp` endpoint and receives `401`.
 
 ## Current production architecture
 
@@ -16,10 +18,10 @@ ChatGPT
   -> private relay on Railway
   -> Windows PC connector
   -> ordinary externally launched Google Chrome (CDP 127.0.0.1:9222)
-  -> Ozon
+  -> Ozon / Wildberries / Yandex Market / Megamarket / Avito / web stores
 ```
 
-This architecture is intentional: direct Railway/datacenter requests and Playwright-launched browsers are commonly blocked by Ozon, while an ordinary Chrome process on the user's PC works reliably.
+This architecture is intentional: marketplace anti-bot and regional/session-dependent pricing are more reliably handled through the user's ordinary local Chrome than by direct Railway/datacenter requests. Railway orchestrates jobs; the local connector performs the browser work.
 
 ## Buyer tools
 
@@ -30,7 +32,7 @@ This architecture is intentional: direct Railway/datacenter requests and Playwri
 - `ozon_get_price(product)`
 - `ozon_delivery(product)`
 - `ozon_compare(products)`
-- `market_search(query, marketplaces, limit_per_market)` — searches Ozon, Wildberries and Yandex Market together
+- `market_search(query, marketplaces, limit_per_market)` — searches any subset of Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores
 - `market_compare(query, marketplaces, limit_per_market)` — returns the cheapest relevant offer per source and the best overall price
 - `best_buy(query, sources, limit_per_source, include_avito)` — Price Hunter mode: exact-model matching, best new offer, separate Avito result, savings vs Ozon
 
@@ -53,7 +55,7 @@ The launcher automatically:
 3. starts an external Chrome with CDP on `127.0.0.1:9222` and a dedicated profile;
 4. installs/updates the local Python package;
 5. starts the local worker on `127.0.0.1:8765`;
-6. long-polls the Railway relay and executes Ozon browser jobs locally.
+6. long-polls the Railway relay and executes marketplace/web browser jobs locally.
 
 Expected console status:
 
@@ -64,7 +66,7 @@ Railway relay: OK
 CONNECTED. Waiting for Ozon requests from ChatGPT...
 ```
 
-Keep the connector window open while ChatGPT is using Ozon. Since v0.4.1 the connector automatically restarts the external Chrome when a new job arrives after it was closed, and the local worker reconnects to a fresh CDP/page. If the connector itself is closed, run `START_OZON_MCP.cmd` again. The Ozon login persists in the dedicated local Chrome profile unless that session expires or the profile is cleared.
+Keep the connector window open while ChatGPT is using Price Hunter. Since v0.4.1 the connector automatically restarts the external Chrome when a new job arrives after it was closed, and the local worker reconnects to a fresh CDP/page. If the connector itself is closed, run `START_OZON_MCP.cmd` again. The Ozon login persists in the dedicated local Chrome profile unless that session expires or the profile is cleared.
 
 ## Network requirement
 
@@ -74,7 +76,7 @@ The relay host is:
 
 If the PC cannot reach it directly, route **only this exact relay domain** through the router/VPN.
 
-Do **not** route `ozon.ru` through VPN. Ozon should use the normal local Internet connection.
+Do **not** route marketplace sites through the relay VPN rule. The intended setup is to route only the relay hostname if necessary; Ozon/Wildberries/Yandex Market/Megamarket/Avito/web stores should use the normal local Internet connection unless the user's own network policy requires otherwise.
 
 ## Security
 
@@ -143,9 +145,9 @@ If ChatGPT receives `401`, reconnect **Ozon Buyer MCP Personal** through Auth0 a
 
 
 
-## Multi-market search (v0.5.0)
+## Multi-market search (v0.5.0+)
 
-Cross-market discovery uses the same privacy model as Ozon: Railway never logs in to a marketplace directly. The local Windows connector opens the rendered public/search pages in the dedicated Chrome profile and returns only product-card fields needed for comparison.
+Cross-market discovery uses the same privacy model as the original Ozon integration: Railway never logs in to marketplaces directly. The local Windows connector opens rendered public/search pages in the dedicated Chrome profile and returns only bounded product fields needed for comparison.
 
 Supported marketplace identifiers:
 
@@ -163,7 +165,7 @@ Example workflow:
 3. compare price, rating, review count and delivery text;
 4. open the returned product URL before purchase.
 
-Marketplace pages are dynamic. Prices and delivery can depend on region, account, promotions and payment method. Cross-market matching uses query/title relevance, so exact model names produce the most reliable price comparison.
+Marketplace pages are dynamic. Prices and delivery can depend on region, account, promotions and payment method. Cross-market matching uses token/model relevance and exact-model preference, so exact model names produce the most reliable price comparison.
 
 
 ## Price Hunter (v0.6.0)
@@ -179,3 +181,13 @@ Example:
 `best_buy("Genau Stride X")`
 
 The response includes the best new offer, best Avito offer (if enabled), best Ozon offer, savings versus Ozon, and the best matching result per source.
+
+
+## Current release summary
+
+- Version: `0.6.0`
+- Production commit: `ccfaa5ead34e5f428583ccc5533106b1d2907ba2`
+- Production MCP: online
+- Production relay: online
+- Local worker: auto-updates from `main` when `START_OZON_MCP.cmd` is restarted
+- Canonical Yandex Disk documentation: `/ChatGPT/Ozon Buyer MCP/README.md`
