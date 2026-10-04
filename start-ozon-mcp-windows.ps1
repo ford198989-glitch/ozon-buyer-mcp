@@ -179,8 +179,8 @@ try {
 }
 
 Write-Host ""
-Write-Host "CONNECTED. Waiting for Ozon requests from ChatGPT..." -ForegroundColor Green
-Write-Host "Keep this window and Chrome open while using Ozon." -ForegroundColor Cyan
+Write-Host "CONNECTED. Waiting for marketplace requests from ChatGPT..." -ForegroundColor Green
+Write-Host "Keep this window and Chrome open while using Price Hunter." -ForegroundColor Cyan
 Write-Host ""
 
 $headers = @{ Authorization = "Bearer $Token" }
@@ -193,7 +193,7 @@ while ($true) {
             Ensure-ChromeCdp
             $job = $next.job
             $op = [string]$job.op
-            if ($op -notin @("search-dom","delivery-dom","fetch-json")) {
+            if ($op -notin @("search-dom","market-search-dom","delivery-dom","fetch-json")) {
                 $response = @{ ok=$false; error="unsupported operation: $op" }
             } else {
                 try {
