@@ -420,6 +420,11 @@ class OzonBrowser:
                     const d = String(s || "").replace(/[^0-9]/g, "");
                     return d ? Number(d) : null;
                   };
+                  const scalarPrice = (s) => {
+                    const t = String(s ?? "").trim();
+                    const m = t.match(/^(\d[\d\s\u00a0]*?)(?:[.,]\d{1,2})?$/);
+                    return m ? num(m[1]) : null;
+                  };
                   const prices = (s) => Array.from(
                     String(s || "").matchAll(/(\d[\d\s\u00a0]{1,12})\s*₽/g)
                   ).map((m) => num(m[1])).filter(Boolean);
@@ -505,10 +510,15 @@ class OzonBrowser:
                     }
                     const directPriceNode = node?.querySelector?.(selector);
                     const allPrices = prices(text);
-                    const directPrice = num(
+                    const directRaw =
                       directPriceNode?.getAttribute?.("content") ||
-                      directPriceNode?.innerText
-                    );
+                      directPriceNode?.getAttribute?.("data-price") ||
+                      directPriceNode?.innerText ||
+                      "";
+                    const directPrice =
+                      scalarPrice(directRaw) ||
+                      prices(directRaw)[0] ||
+                      null;
                     const price = directPrice || allPrices[0] || null;
                     if (!price) continue;
                     const oldPrice = allPrices.find((p) => p > price) || null;
@@ -644,6 +654,11 @@ class OzonBrowser:
                         const d = String(v ?? "").replace(/[^0-9]/g, "");
                         return d ? Number(d) : null;
                       };
+                      const scalarPrice = (v) => {
+                        const t = String(v ?? "").trim();
+                        const m = t.match(/^(\d[\d\s\u00a0]*?)(?:[.,]\d{1,2})?$/);
+                        return m ? num(m[1]) : null;
+                      };
                       const rub = (s) => {
                         const m = String(s || "").match(/(\d[\d\s\u00a0]{1,12})\s*₽/);
                         return m ? num(m[1]) : null;
@@ -672,7 +687,7 @@ class OzonBrowser:
                       for (const p of products) {
                         const offers = Array.isArray(p.offers) ? p.offers[0] : p.offers;
                         const agg = p.aggregateRating || {};
-                        const price = num(
+                        const price = scalarPrice(
                           offers?.price ??
                           offers?.lowPrice ??
                           offers?.priceSpecification?.price
@@ -701,11 +716,11 @@ class OzonBrowser:
                       for (const sel of priceSelectors) {
                         const el = document.querySelector(sel);
                         if (!el) continue;
-                        price = num(
+                        const attr =
                           el.getAttribute?.("content") ||
                           el.getAttribute?.("data-price") ||
-                          el.innerText
-                        );
+                          "";
+                        price = scalarPrice(attr) || rub(el.innerText || "");
                         if (price && price >= 50) break;
                       }
                       if (!price) {
