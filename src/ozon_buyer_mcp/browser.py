@@ -11,6 +11,8 @@ from urllib.parse import quote
 
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
+from .marketplaces import market_search_url, normalize_marketplace
+
 _HOME = "https://www.ozon.ru/"
 _API = "https://www.ozon.ru/api/composer-api.bx/page/json/v2?url="
 
@@ -344,6 +346,181 @@ class OzonBrowser:
             if not prev or len(str(card.get("text") or "")) > len(str(prev.get("text") or "")):
                 dedup[sku] = card
         return list(dedup.values())[:limit]
+
+    async def market_search_dom(self, marketplace: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
+        market = normalize_marketplace(marketplace)
+        limit = max(1, min(int(limit), 30))
+
+        if market == "ozon":
+            path = f"/search/?text={quote(str(query or '').strip())}&from_global=true"
+            return await self.search_dom(path, limit=limit)
+
+        if self._remote_worker_url:
+            data = await self._remote_post(
+                "/market-search-dom",
+                {"marketplace": market, "query": query, "limit": limit},
+            )
+            return list(data.get("items") or [])
+
+        await self.ensure_ready()
+        assert self._context is not None
+        page = await self._context.new_page()
+        try:
+            url = market_search_url(market, query)
+            response = await page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=self._nav_timeout_ms,
+            )
+            await page.wait_for_timeout(max(3500, self._challenge_wait_ms // 3))
+
+            for _ in range(3):
+                await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight, 900))")
+                await page.wait_for_timeout(650)
+
+            if response and response.status >= 400:
+                raise OzonUpstreamError(
+                    f"{market} search page returned HTTP {response.status}"
+                )
+
+            title = (await page.title()).lower()
+            body = (await page.locator("body").inner_text(timeout=10000)).lower()
+            blocked_markers = (
+                "access denied",
+                "доступ ограничен",
+                "доступ временно ограничен",
+                "подозрительная активность",
+                "captcha",
+                "капча",
+            )
+            if any(x in title or x in body[:6000] for x in blocked_markers):
+                raise OzonUpstreamError(f"{market} search page is blocked")
+
+            items = await page.evaluate(
+                """({marketplace, limit}) => {
+                  const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+                  const num = (s) => {
+                    const d = String(s || "").replace(/[^0-9]/g, "");
+                    return d ? Number(d) : null;
+                  };
+                  const prices = (s) => Array.from(
+                    String(s || "").matchAll(/(\d[\d\s\u00a0]{1,12})\s*₽/g)
+                  ).map((m) => num(m[1])).filter(Boolean);
+                  const ratingAndReviews = (s) => {
+                    const t = clean(s);
+                    const m = t.match(/([1-5](?:[\.,]\d)?)\s+([\d\s\u00a0]+)\s*(?:оцен|отзыв)/i);
+                    return {
+                      rating: m ? Number(m[1].replace(",", ".")) : null,
+                      reviews: m ? num(m[2]) : null,
+                    };
+                  };
+                  const delivery = (s) => {
+                    const t = clean(s);
+                    const m = t.match(/(.{0,55}(?:сегодня|завтра|послезавтра|достав\w*|получ\w*|\d{1,2}\s+(?:октябр|ноябр|декабр|январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр)\w*).{0,90})/i);
+                    return m ? clean(m[1]) : null;
+                  };
+
+                  let anchors = [];
+                  if (marketplace === "wildberries") {
+                    anchors = Array.from(document.querySelectorAll(
+                      'a[href*="/catalog/"][href*="/detail.aspx"]'
+                    ));
+                  } else {
+                    anchors = Array.from(document.querySelectorAll(
+                      'a[href*="/card/"], a[href*="/product--"], a[href*="/product/"]'
+                    ));
+                  }
+
+                  const out = [];
+                  const seen = new Set();
+
+                  for (const a of anchors) {
+                    const href = a.href || "";
+                    if (!href) continue;
+
+                    let productId = null;
+                    if (marketplace === "wildberries") {
+                      const m = href.match(/\/catalog\/(\d+)\/detail\.aspx/i);
+                      productId = m ? m[1] : null;
+                    } else {
+                      try {
+                        const u = new URL(href);
+                        productId = u.searchParams.get("sku") || u.searchParams.get("uniqueId");
+                        if (!productId) {
+                          const m = u.pathname.match(/\/(\d{5,})(?:\/|$)/);
+                          productId = m ? m[1] : null;
+                        }
+                      } catch (_) {}
+                    }
+                    const key = productId || href.split("?")[0];
+                    if (seen.has(key)) continue;
+
+                    let node = a;
+                    let text = clean(a.innerText);
+                    for (let i = 0; i < 8 && node && node.parentElement; i++) {
+                      node = node.parentElement;
+                      const t = clean(node.innerText);
+                      if (t.length >= 25 && t.length <= 2400 && /₽/.test(t)) {
+                        text = t;
+                        break;
+                      }
+                    }
+                    if (!/₽/.test(text)) continue;
+
+                    const selector = marketplace === "wildberries"
+                      ? '.price__lower-price, ins.price__lower-price, [class*="price__lower-price"]'
+                      : '[data-auto="snippet-price-current"], [data-auto="price-value"], [data-zone-name="price"]';
+                    const directPriceNode = node?.querySelector?.(selector);
+                    const allPrices = prices(text);
+                    const price = num(directPriceNode?.innerText) || allPrices[0] || null;
+                    if (!price) continue;
+                    const oldPrice = allPrices.find((p) => p > price) || null;
+
+                    const titleSelectors = marketplace === "wildberries"
+                      ? ['.product-card__name', '.product-card__brand', '[class*="product-card__name"]']
+                      : ['[data-auto="snippet-title"]', 'h3', 'h2'];
+                    const titleParts = [];
+                    for (const sel of titleSelectors) {
+                      const t = clean(node?.querySelector?.(sel)?.innerText);
+                      if (t && !titleParts.includes(t)) titleParts.push(t);
+                    }
+                    const img = node?.querySelector?.("img") || a.querySelector("img");
+                    const alt = clean(img?.getAttribute?.("alt"));
+                    let productTitle = titleParts.join(" / ");
+                    if ((!productTitle || productTitle.length < 5) && alt) productTitle = alt;
+                    if (!productTitle || /₽/.test(productTitle)) productTitle = clean(a.innerText);
+                    if (!productTitle || /₽/.test(productTitle)) {
+                      const lines = String(text || "").split(/\n+/).map(clean).filter(Boolean);
+                      productTitle = lines.find((x) => !/₽/.test(x) && x.length >= 5 && x.length <= 240) || null;
+                    }
+
+                    const rr = ratingAndReviews(text);
+                    out.push({
+                      product_id: productId,
+                      title: productTitle,
+                      url: href.split("?")[0],
+                      price_rub: price,
+                      old_price_rub: oldPrice,
+                      rating: rr.rating,
+                      reviews: rr.reviews,
+                      delivery_text: delivery(text),
+                      seller: null,
+                      image: img ? (img.currentSrc || img.src || "") : "",
+                      text,
+                    });
+                    seen.add(key);
+                    if (out.length >= limit) break;
+                  }
+                  return out;
+                }""",
+                {"marketplace": market, "limit": limit},
+            )
+            return list(items or [])[:limit]
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
 
     async def delivery_dom(self, path: str) -> list[str]:
         if self._remote_worker_url:
