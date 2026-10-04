@@ -1,10 +1,10 @@
-# Price Hunter MCP v0.6.0
+# Price Hunter MCP v0.6.1
 
 Read-only buyer-side Price Hunter for ChatGPT. It compares Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores through the same local Chrome profile; Ozon product details/reviews remain available.
 
-## Production status (2026-10-04)
+## Production status (2026-10-05)
 
-The protected v0.6.0 build is deployed on Railway. Both production services — `ozon-buyer-mcp-live` and `ozon-worker-relay` — are online. The ChatGPT connector **Ozon Buyer MCP Personal** still uses Auth0 OAuth with the existing `ozon:read` scope name for backward compatibility, although the service now covers multiple marketplaces and web stores.
+The protected v0.6.1 build is deployed on Railway. Both production services — `ozon-buyer-mcp-live` and `ozon-worker-relay` — are online. The ChatGPT connector **Ozon Buyer MCP Personal** still uses Auth0 OAuth with the existing `ozon:read` scope name for backward compatibility, although the service now covers multiple marketplaces and web stores.
 
 The owner manually signs in to Ozon in the dedicated Chrome profile on their Windows PC when personal Ozon prices are needed. Other marketplace and web searches use the same local Chrome profile and rendered pages. An earlier end-to-end check of SKU `2568217536` matched the prices shown in that Chrome window (380 RUB with Ozon Card, 420 RUB without) at the time of the check; those numbers are only a historical validation example.
 
@@ -183,9 +183,18 @@ Example:
 The response includes the best new offer, best Avito offer (if enabled), best Ozon offer, savings versus Ozon, and the best matching result per source.
 
 
+## Reliability fixes in v0.6.1
+
+- fixed the embedded JavaScript newline-regex bug that broke Wildberries and Yandex Market parsing with `Invalid regular expression: missing /`;
+- added fast CAPTCHA/robot-page detection for marketplace and web searches so blocked sources fail cleanly instead of stalling the whole comparison;
+- bounded marketplace/web navigation times and web candidate depth so one slow source cannot occupy the single Windows browser worker for minutes;
+- aligned local-worker, relay and MCP request deadlines to avoid late `/result` 404 responses after the caller has already timed out.
+
+Megamarket may still present an interactive CAPTCHA. The service does not bypass it; solve it manually in the dedicated Chrome window if that source is needed.
+
 ## Current release summary
 
-- Version: `0.6.0`
+- Version: `0.6.1`
 - Production commit: `ccfaa5ead34e5f428583ccc5533106b1d2907ba2`
 - Production MCP: online
 - Production relay: online
