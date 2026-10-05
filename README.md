@@ -2,6 +2,31 @@
 
 Read-only buyer-side Price Hunter for ChatGPT. It compares Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores through the same local Chrome profile; Ozon product details/reviews remain available.
 
+## Expansion from Ozon to Price Hunter
+
+The original Ozon-only integration gained Wildberries and Yandex Market in v0.5.0, then Megamarket, Avito and web-store discovery in v0.6.0. v0.6.1 and v0.6.2 improve parser reliability, deadlines, price extraction and relevance selection. The repository and authenticated live health both identify the current release as v0.6.2.
+
+| Source | Identifier | Implemented capability | Practical limitation |
+| --- | --- | --- | --- |
+| Ozon | `ozon` | Search, product details, reviews, prices, delivery and comparison; participates in cross-source search | Personal prices require manual sign-in in the dedicated Chrome profile |
+| Wildberries | `wildberries` / `wb` | Rendered search cards and cross-source comparison | Fields depend on the current page layout and account/region |
+| Yandex Market | `yandex_market` / `yandex` / `market` | Rendered search cards and cross-source comparison | Seller, promotion and payment conditions must be checked on the linked offer |
+| Megamarket | `megamarket` / `mega` | Rendered search cards and cross-source comparison | CAPTCHA may require manual interaction in Chrome |
+| Avito | `avito` / `авито` | Listing discovery; separate `best_avito_offer` | Condition is reported as unknown; listings are excluded from the new-goods winner |
+| Web stores | `web` / `internet` / `интернет` | Yandex Search discovers external store pages; JSON-LD or rendered page data supplies prices | Only 3–5 candidate pages are inspected per call; this is not an exhaustive Internet search |
+
+The added sources support discovery and price comparison. Detailed product/review/delivery tools remain Ozon-specific. Cross-source offers may contain price, old price, title, URL, rating, review count, seller, image and delivery text; unavailable fields are `null`. Searches run sequentially in the same Windows Chrome profile. Per-source failures are returned in `errors`, and successful sources can still contribute results; an empty result does not establish that a product is unavailable everywhere.
+
+Examples with the current tool schema:
+
+```python
+market_search(query="Genau Stride X", marketplaces=["ozon", "wb", "yandex_market"], limit_per_market=6)
+market_compare(query="Genau Stride X", marketplaces=["ozon", "wb", "yandex_market", "megamarket", "web"])
+best_buy(query="Genau Stride X", sources=["ozon", "wb", "yandex_market", "web"], limit_per_source=6, include_avito=False)
+```
+
+Omitting the source list searches all six sources. Public per-source limits are clamped to 1–20. `market_search` returns `offers`, `cheapest` and `errors`; `market_compare` returns `by_market`, `best_offer` and the price spread between selected source offers; `best_buy` returns `best_new_offer`, `best_avito_offer`, `best_ozon_offer`, `by_source` and `savings_vs_ozon_rub`. Savings describe the inspected results, not a guaranteed market-wide minimum. Restart `START_OZON_MCP.cmd` after a code update so the local worker understands the new marketplace jobs.
+
 ## Production status (2026-10-05)
 
 The protected v0.6.2 build is deployed on Railway at commit `07aae6273cd5ca1cbc0539dca93d363153d354af`. The `ozon-buyer-mcp-live` deployment and `ozon-worker-relay` are in Railway's `SUCCESS` state; the OAuth-connected **Ozon Buyer MCP Personal** connector returned `ozon_health.version = 0.6.2` on 2026-10-05. This health check does not establish that the Windows connector is currently online or that a particular marketplace search succeeds. The connector still uses the existing Auth0 `ozon:read` scope name for backward compatibility, although the service now covers multiple marketplaces and web stores.
@@ -178,7 +203,9 @@ Since the deployed `07aae62` change, `market_search.cheapest` is selected only f
 
 Default sources are Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores. Avito is reported separately so used/second-hand listings do not automatically beat new retail offers.
 
-The generic `web` source discovers candidate stores through Yandex Search, then opens a limited number of product pages in the local Chrome profile. It prefers JSON-LD Product/Offer prices and falls back to rendered page price elements. Every web result includes price-confidence metadata; low-confidence prices are excluded from `best_buy`.
+The generic `web` source discovers candidate stores through Yandex Search, then opens a limited number of product pages in the local Chrome profile. It excludes the separately handled marketplace domains, prefers JSON-LD Product/Offer prices (`high` confidence), and falls back to rendered price elements or body text (`medium` confidence). Confidence describes the extraction method; it does not verify the seller, currency, stock, item condition or final checkout price.
+
+`best_buy` normally accepts priced offers with an exact token/model match or relevance at least `0.68`, excluding `low` confidence. If there are no qualifying new-goods offers, the current code falls back to priced new-source offers with relevance at least `0.55`; that fallback does not repeat the confidence exclusion. `by_source` continues to use the stricter filter, so a fallback winner can coexist with an empty strict result for its source. Within accepted candidates the lowest price wins; an exact match is not separately ranked ahead of every weaker candidate. Marketplace and web offers are classified as new by source, rather than by inspecting their actual condition. Always check model, condition, currency and offer terms on the linked page.
 
 Example:
 
