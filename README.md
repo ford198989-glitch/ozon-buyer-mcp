@@ -4,7 +4,7 @@ Read-only buyer-side Price Hunter for ChatGPT. It compares Ozon, Wildberries, Ya
 
 ## Production status (2026-10-05)
 
-The protected v0.6.1 build is deployed on Railway. Both production services — `ozon-buyer-mcp-live` and `ozon-worker-relay` — are online. The ChatGPT connector **Ozon Buyer MCP Personal** still uses Auth0 OAuth with the existing `ozon:read` scope name for backward compatibility, although the service now covers multiple marketplaces and web stores.
+The protected v0.6.2 build is deployed on Railway at commit `07aae6273cd5ca1cbc0539dca93d363153d354af`. The `ozon-buyer-mcp-live` deployment and `ozon-worker-relay` are in Railway's `SUCCESS` state; the OAuth-connected **Ozon Buyer MCP Personal** connector returned `ozon_health.version = 0.6.2` on 2026-10-05. This health check does not establish that the Windows connector is currently online or that a particular marketplace search succeeds. The connector still uses the existing Auth0 `ozon:read` scope name for backward compatibility, although the service now covers multiple marketplaces and web stores.
 
 The owner manually signs in to Ozon in the dedicated Chrome profile on their Windows PC when personal Ozon prices are needed. Other marketplace and web searches use the same local Chrome profile and rendered pages. An earlier end-to-end check of SKU `2568217536` matched the prices shown in that Chrome window (380 RUB with Ozon Card, 420 RUB without) at the time of the check; those numbers are only a historical validation example.
 
@@ -35,6 +35,8 @@ This architecture is intentional: marketplace anti-bot and regional/session-depe
 - `market_search(query, marketplaces, limit_per_market)` — searches any subset of Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores
 - `market_compare(query, marketplaces, limit_per_market)` — returns the cheapest relevant offer per source and the best overall price
 - `best_buy(query, sources, limit_per_source, include_avito)` — Price Hunter mode: exact-model matching, best new offer, separate Avito result, savings vs Ozon
+
+Some ChatGPT connections retain an older tool schema and do not show the three multi-market tools. On those connections, call `ozon_search(query="Genau Stride X", sort="best_buy")`, `sort="market_compare"`, or `sort="market_search"` to invoke the corresponding mode across the default sources. The `limit` parameter becomes the per-source limit (capped at 20). These modes ignore `price_min` and `price_max`; use the dedicated tools when their schema is available. Reconnecting the plugin or opening a new chat may refresh the tool list.
 
 The service is read-only: it does not perform login, cart, checkout, orders,
 favorites or other write actions. Sign-in to Ozon happens manually in the
@@ -167,6 +169,8 @@ Example workflow:
 
 Marketplace pages are dynamic. Prices and delivery can depend on region, account, promotions and payment method. Cross-market matching uses token/model relevance and exact-model preference, so exact model names produce the most reliable price comparison.
 
+Since the deployed `07aae62` change, `market_search.cheapest` is selected only from exact matches or offers with relevance at least `0.65`. `market_compare` applies the same gate to each source; a source with no qualifying priced offer has `best_offer: null`. The service no longer labels an unrelated cheap result as the best match. Where bounded card text has explicit RUB amounts, the parser uses its first amount as the current price and a later higher amount as the old price; otherwise it uses the worker's structured price. Verify the selected offer on its product page before purchase.
+
 
 ## Price Hunter (v0.6.0)
 
@@ -195,9 +199,9 @@ Megamarket may still present an interactive CAPTCHA. The service does not bypass
 ## Current release summary
 
 - Version: `0.6.2`
-- Production commit: `ccfaa5ead34e5f428583ccc5533106b1d2907ba2`
-- Production MCP: online
-- Production relay: online
+- Production MCP commit: `07aae6273cd5ca1cbc0539dca93d363153d354af`
+- Production MCP: Railway `SUCCESS`; authenticated `ozon_health` returned version `0.6.2` on 2026-10-05
+- Production relay: Railway `SUCCESS` on 2026-10-05
 - Local worker: auto-updates from `main` when `START_OZON_MCP.cmd` is restarted
 - Canonical Yandex Disk documentation: `/ChatGPT/Ozon Buyer MCP/README.md`
 
