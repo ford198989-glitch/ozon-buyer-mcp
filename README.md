@@ -1,5 +1,9 @@
 # Price Hunter MCP v0.6.2
 
+## Current Linux/Acer production — 2026-10-13
+
+Railway has been retired. MCP, relay, native browser worker and dedicated systemd Chrome/Xvfb now run on the owner's Linux host. Canonical MCP path: `/ozon/mcp` on HTTPS 443 with mandatory OAuth `ozon:read`; actual short-expiry renewal checks and protected rendered search passed. Windows is no longer required for this deployment. Orders, cart and payments remain disabled. [Detailed migration, operations and verification](docs/ACER_MIGRATION_2026-10-13.md). The dated Railway descriptions below are historical. Current local overlays must be distinguished from the application version 0.6.2.
+
 Read-only buyer-side Price Hunter for ChatGPT. It compares Ozon, Wildberries, Yandex Market, Megamarket, Avito and ordinary web stores through the same local Chrome profile; Ozon product details/reviews remain available.
 
 ## Expansion from Ozon to Price Hunter
@@ -15,7 +19,7 @@ The original Ozon-only integration gained Wildberries and Yandex Market in v0.5.
 | Avito | `avito` / `авито` | Listing discovery; separate `best_avito_offer` | Condition is reported as unknown; listings are excluded from the new-goods winner |
 | Web stores | `web` / `internet` / `интернет` | Yandex Search discovers external store pages; JSON-LD or rendered page data supplies prices | Only 3–5 candidate pages are inspected per call; this is not an exhaustive Internet search |
 
-The added sources support discovery and price comparison. Detailed product/review/delivery tools remain Ozon-specific. Cross-source offers may contain price, old price, title, URL, rating, review count, seller, image and delivery text; unavailable fields are `null`. Searches run sequentially in the same Windows Chrome profile. Per-source failures are returned in `errors`, and successful sources can still contribute results; an empty result does not establish that a product is unavailable everywhere.
+The added sources support discovery and price comparison. Detailed product/review/delivery tools remain Ozon-specific. Cross-source offers may contain price, old price, title, URL, rating, review count, seller, image and delivery text; unavailable fields are `null`. Searches run sequentially in the same Linux Chrome profile. Per-source failures are returned in `errors`, and successful sources can still contribute results; an empty result does not establish that a product is unavailable everywhere.
 
 Examples with the current tool schema:
 
@@ -27,7 +31,7 @@ best_buy(query="Genau Stride X", sources=["ozon", "wb", "yandex_market", "web"],
 
 Omitting the source list searches all six sources. Public per-source limits are clamped to 1–20. `market_search` returns `offers`, `cheapest` and `errors`; `market_compare` returns `by_market`, `best_offer` and the price spread between selected source offers; `best_buy` returns `best_new_offer`, `best_avito_offer`, `best_ozon_offer`, `by_source` and `savings_vs_ozon_rub`. Savings describe the inspected results, not a guaranteed market-wide minimum. Restart `START_OZON_MCP.cmd` after a code update so the local worker understands the new marketplace jobs.
 
-## Production status (2026-10-05)
+## Historical Railway status (2026-10-05)
 
 The protected v0.6.2 build is deployed on Railway at commit `07aae6273cd5ca1cbc0539dca93d363153d354af`. The `ozon-buyer-mcp-live` deployment and `ozon-worker-relay` are in Railway's `SUCCESS` state; the OAuth-connected **Ozon Buyer MCP Personal** connector returned `ozon_health.version = 0.6.2` on 2026-10-05. This health check does not establish that the Windows connector is currently online or that a particular marketplace search succeeds. The connector still uses the existing Auth0 `ozon:read` scope name for backward compatibility, although the service now covers multiple marketplaces and web stores.
 
@@ -35,7 +39,7 @@ The owner manually signs in to Ozon in the dedicated Chrome profile on their Win
 
 The Windows connector must be running for live marketplace/web requests. The old anonymous ChatGPT connector is incompatible with the protected `/mcp` endpoint and receives `401`.
 
-## Current production architecture
+## Historical Railway architecture (superseded)
 
 ```
 ChatGPT
@@ -67,7 +71,7 @@ The service is read-only: it does not perform login, cart, checkout, orders,
 favorites or other write actions. Sign-in to Ozon happens manually in the
 dedicated Chrome window, outside the MCP tools.
 
-## Windows quick start
+## Optional legacy Windows quick start
 
 Download and run:
 
