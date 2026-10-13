@@ -1,5 +1,7 @@
 # Price Hunter MCP v0.6.2
 
+> **План развития:** [ROADMAP.md](ROADMAP.md) — точное сопоставление моделей, безопасный выбор лучших предложений, подключение DNS, Ситилинк, Регард и других магазинов. Новые адаптеры **запланированы**, но ещё не реализованы.
+
 ## Current Linux/Acer production — 2026-10-13
 
 Railway has been retired. MCP, relay, native browser worker and dedicated systemd Chrome/Xvfb now run on the owner's Linux host. Canonical MCP path: `/ozon/mcp` on HTTPS 443 with mandatory OAuth `ozon:read`; actual short-expiry renewal checks and protected rendered search passed. Windows is no longer required for this deployment. Orders, cart and payments remain disabled. [Detailed migration, operations and verification](docs/ACER_MIGRATION_2026-10-13.md). The dated Railway descriptions below are historical. Current local overlays must be distinguished from the application version 0.6.2.
