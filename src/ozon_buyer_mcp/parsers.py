@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from html import unescape
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -156,7 +157,64 @@ def _seller(page: dict[str, Any]) -> Seller | None:
     return Seller(name=name, rating=rating, url=clean_url(link))
 
 
+
+def _detail_text(value: Any) -> str:
+    if isinstance(value, str):
+        value = re.sub(r"<[^>]*>", " ", value)
+        return re.sub(r"\s+", " ", unescape(value)).strip()[:12000]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, dict):
+        return _detail_text(value.get("text") or value.get("value") or "")
+    if isinstance(value, list):
+        return "; ".join(filter(None, (_detail_text(x) for x in value[:100])))[:12000]
+    return ""
+
+
+def _product_content(pages: list[dict[str, Any]]) -> tuple[dict[str, str], Description]:
+    # Restrict traversal to product content widgets, never menu/recommendation data.
+    characteristics: dict[str, str] = {}
+    paragraphs: list[str] = []
+    images: list[str] = []
+
+    def walk(node: Any, mode: str, depth: int = 0) -> None:
+        if depth > 12:
+            return
+        if isinstance(node, list):
+            for item in node[:200]:
+                walk(item, mode, depth + 1)
+        elif isinstance(node, dict):
+            if mode == "characteristics":
+                name = _detail_text(node.get("name") or node.get("title"))
+                value = _detail_text(node.get("values") or node.get("value"))
+                if name and value and len(name) <= 200 and len(characteristics) < 200:
+                    characteristics.setdefault(name, value[:2000])
+            else:
+                for key in ("text", "description", "content"):
+                    if isinstance(node.get(key), str):
+                        text = _detail_text(node[key])
+                        if text and text not in paragraphs and len(paragraphs) < 100:
+                            paragraphs.append(text)
+                for key in ("src", "image", "imageUrl"):
+                    src = node.get(key)
+                    if isinstance(src, str) and src.startswith("https://") and src not in images and len(images) < 20:
+                        images.append(src)
+            for key, value in list(node.items())[:200]:
+                if key not in {"action", "link", "url", "trackingInfo"} and isinstance(value, (list, dict)):
+                    walk(value, mode, depth + 1)
+
+    for page in pages:
+        for name in ("webCharacteristics", "webShortCharacteristics"):
+            for data in widgets(page, name):
+                walk(data, "characteristics")
+        for name in ("webDescription", "webRichContent", "webProductDescription"):
+            for data in widgets(page, name):
+                walk(data, "description")
+    return characteristics, Description(text="\n\n".join(paragraphs)[:20000], images=images)
+
+
 def parse_details(base_page: dict[str, Any], page2: dict[str, Any] | None = None) -> ProductDetails:
+    characteristics, description = _product_content([base_page, page2 or {}])
     heading = widget(base_page, "webProductHeading") or {}
     price = widget(base_page, "webPrice") or {}
     gallery = widget(base_page, "webGallery") or {}
@@ -181,7 +239,8 @@ def parse_details(base_page: dict[str, Any], page2: dict[str, Any] | None = None
         reviews=reviews,
         seller=_seller(base_page),
         images=list(dict.fromkeys(images))[:10],
-        description=Description(),
+        characteristics=characteristics,
+        description=description,
     )
 
 

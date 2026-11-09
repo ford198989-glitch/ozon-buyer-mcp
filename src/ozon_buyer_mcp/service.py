@@ -1,12 +1,12 @@
 from __future__ import annotations
 import asyncio
-import json
 import re
 from urllib.parse import quote
 from .browser import OzonBrowser
 from .marketplaces import NEW_GOODS_MARKETPLACES, normalize_marketplaces
 from .models import CompareItem, CompareResponse, DeliveryResponse, MarketplaceOffer, MarketplaceSearchResponse, PriceResponse, ProductDetails, ProductSummary, ReviewsResponse, SearchResponse
-from .parsers import delivery_candidates, parse_details, parse_reviews, product_path, price_to_number
+from .delivery import DATE, ranked_delivery_candidates
+from .parsers import parse_details, parse_reviews, product_path, price_to_number
 
 _SORT_MAP = {"popular":"", "price":"price", "price_desc":"price_desc", "rating":"rating", "new":"new", "discount":"discount"}
 
@@ -28,15 +28,9 @@ def _summary_from_dom(card: dict) -> ProductSummary:
         reviews = price_to_number(m.group(2))
 
     delivery_text = None
-    dm = re.search(
-        r"(.{0,90}(?:достав\w*|завтра|послезавтра|сегодня|"
-        r"\b(?:28|29)\s+сентябр\w*|"
-        r"понедельник|вторник|сред[ау]|четверг|пятниц|суббот|воскресень).{0,130})",
-        text,
-        re.I,
-    )
+    dm = DATE.search(text)
     if dm:
-        delivery_text = re.sub(r"\s+", " ", dm.group(1)).strip()
+        delivery_text = re.sub(r"\s+", " ", text[max(0, dm.start()-40):dm.end()+80]).strip()
 
     title = str(card.get("title") or "").strip() or None
     if not title:
@@ -413,7 +407,6 @@ class OzonService:
         path = product_path(product)
         details = await self.product(product, include_description=False)
         seller_name = (details.seller.name if details.seller else "") or ""
-        price_text = str(details.price_rub or "")
 
         paths = [path]
         paths += [
@@ -425,62 +418,9 @@ class OzonService:
             return_exceptions=True,
         )
 
-        trigger = re.compile(
-            r"(?:достав\w*|сегодня|завтра|послезавтра|"
-            r"\b\d{1,2}\s+(?:сентябр\w*|октябр\w*))",
-            re.I,
+        candidates = ranked_delivery_candidates(
+            pages, sku=details.sku, seller=seller_name, price=details.price_rub,
         )
-        found = []
-        scored = []
-
-        for page_index, page in enumerate(pages):
-            if not isinstance(page, dict):
-                continue
-            for widget_key, raw in (page.get("widgetStates") or {}).items():
-                try:
-                    obj = json.loads(raw) if isinstance(raw, str) else raw
-                    text = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
-                except Exception:
-                    text = str(raw)
-                if not trigger.search(text):
-                    continue
-
-                lower = text.lower()
-                seller_match = bool(seller_name and seller_name.lower() in lower)
-                price_match = bool(price_text and price_text in text)
-                sku_match = str(product) in text or (details.sku and str(details.sku) in text)
-
-                for m in trigger.finditer(text):
-                    a = max(0, m.start() - 220)
-                    b = min(len(text), m.end() + 260)
-                    snippet = re.sub(r"\\[nrt]+|\s+", " ", text[a:b]).strip()
-                    prefix = f"{widget_key}"
-                    if sku_match:
-                        prefix += " [sku]"
-                    if seller_match:
-                        prefix += " [seller]"
-                    if price_match:
-                        prefix += " [price]"
-                    candidate = f"{prefix}: {snippet}"
-                    score = (
-                        (8 if sku_match else 0)
-                        + (4 if seller_match else 0)
-                        + (2 if price_match else 0)
-                        + (1 if page_index == 0 else 0)
-                    )
-                    if candidate not in found:
-                        found.append(candidate)
-                        scored.append((score, candidate))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        candidates = [x[1] for x in scored[:40]]
-
-        if not candidates:
-            for page in pages:
-                if isinstance(page, dict):
-                    for item in delivery_candidates(page, limit=40):
-                        if item not in candidates:
-                            candidates.append(item)
 
         return DeliveryResponse(
             product=product,
